@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useCallback } from 'react';
 import { Upload, Play, Clock, MessageSquare, CheckCircle2, Loader2, Video, Download, AlertCircle, ExternalLink, Key, X, Terminal, ServerOff } from 'lucide-react';
 import { AppState, ProcessingStep, SlideData, NarrationSegment, AppLanguage } from './types';
@@ -40,10 +39,9 @@ const App: React.FC = () => {
     }
   };
 
-  // 백엔드 주소 설정 (로컬 환경과 배포 환경 구분)
   const BACKEND_URL = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
     ? 'http://localhost:8000' 
-    : 'https://slidestream-backend.onrender.com'; // 실제 배포한 백엔드 URL이 있다면 여기를 수정하세요.
+    : 'https://slidestream-backend.onrender.com';
 
   const isDeployedOnGitHub = window.location.hostname.includes('github.io');
 
@@ -116,7 +114,6 @@ const App: React.FC = () => {
 
   const handleExport = async () => {
     if (state.slides.length === 0 || state.narrations.length === 0) return;
-    
     setState(prev => ({ ...prev, isExporting: true, error: null }));
 
     try {
@@ -159,7 +156,7 @@ const App: React.FC = () => {
       let errorMsg = `내보내기 실패: ${err.message}.`;
       if (err.message === 'Failed to fetch') {
         errorMsg = isDeployedOnGitHub 
-          ? "GitHub Pages 환경에서는 백엔드 서버가 자동으로 실행되지 않습니다. 동영상을 추출하려면 Python 서버를 별도로 배포하거나 로컬에서 실행해야 합니다."
+          ? "GitHub Pages는 정적 사이트이므로 동영상 합성을 위한 Python 서버가 필요합니다. 로컬에서 서버를 실행하거나 별도로 배포하세요."
           : "백엔드 서버에 연결할 수 없습니다. Python 서버가 실행 중인지 확인하세요.";
       }
       setState(prev => ({ ...prev, error: errorMsg }));
@@ -179,18 +176,11 @@ const App: React.FC = () => {
             <h1 className="text-xl font-bold text-slate-900">SlideStream AI</h1>
           </div>
           <div className="flex items-center gap-4">
-            <button 
-              onClick={() => setShowKeyModal(true)}
-              className="text-slate-500 hover:text-blue-600 flex items-center gap-1 text-sm font-medium"
-            >
-              <Key size={14} />
-              API 키 설정
+            <button onClick={() => setShowKeyModal(true)} className="text-slate-500 hover:text-blue-600 flex items-center gap-1 text-sm font-medium">
+              <Key size={14} /> API 키 설정
             </button>
             {state.step === 'ready' && (
-              <button 
-                onClick={() => setState(prev => ({ ...prev, step: 'idle', files: [], error: null }))}
-                className="text-sm font-medium text-slate-500 hover:text-slate-900"
-              >
+              <button onClick={() => setState(prev => ({ ...prev, step: 'idle', files: [], error: null }))} className="text-sm font-medium text-slate-500 hover:text-slate-900">
                 새로 만들기
               </button>
             )}
@@ -202,32 +192,10 @@ const App: React.FC = () => {
         {state.error && (
           <div className="mb-6 max-w-4xl mx-auto p-6 bg-red-50 border border-red-100 rounded-3xl flex flex-col gap-4 text-red-700 shadow-sm">
             <div className="flex items-start gap-4">
-              <div className="bg-red-100 p-2 rounded-xl">
-                <ServerOff className="text-red-600" size={24} />
-              </div>
+              <div className="bg-red-100 p-2 rounded-xl"><ServerOff className="text-red-600" size={24} /></div>
               <div className="text-sm">
-                <p className="font-bold text-lg mb-1">동영상 추출 불가 (서버 연결 안됨)</p>
+                <p className="font-bold text-lg mb-1">문제가 발생했습니다</p>
                 <p className="leading-relaxed text-red-600/80">{state.error}</p>
-              </div>
-            </div>
-            
-            <div className="p-4 bg-white/60 rounded-2xl border border-red-200/50">
-              <p className="text-xs font-bold uppercase tracking-wider text-red-500 mb-2 flex items-center gap-2">
-                <Terminal size={14} /> 해결 가이드
-              </p>
-              <div className="space-y-3">
-                <div className="text-xs text-red-700">
-                  <p className="font-semibold mb-1">현재 상태:</p>
-                  <p>GitHub Pages는 정적 호스팅 서비스로, 동영상 파일을 만드는 <strong>Python 서버</strong>를 실행할 수 없습니다.</p>
-                </div>
-                <div className="text-xs text-red-700">
-                  <p className="font-semibold mb-1">방법 1: 로컬에서 실행 (추천)</p>
-                  <p>터미널에서 <code>python backend/main.py</code>를 실행한 상태에서 이 웹사이트(localhost)를 이용하세요.</p>
-                </div>
-                <div className="text-xs text-red-700">
-                  <p className="font-semibold mb-1">방법 2: 서버 배포</p>
-                  <p>Render.com이나 Railway 같은 곳에 Python 코드를 배포하고, 그 주소를 연결해야 합니다.</p>
-                </div>
               </div>
             </div>
           </div>
@@ -265,32 +233,38 @@ const App: React.FC = () => {
         )}
       </main>
 
-      {/* API 키 모달 */}
       {showKeyModal && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[60] flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl p-6 max-w-md w-full shadow-2xl">
             <div className="flex justify-between items-center mb-4">
-              <h3 className="text-lg font-bold flex items-center gap-2">
-                <Key className="text-blue-600" size={20} />
-                Gemini API 키 입력
-              </h3>
-              <button onClick={() => setShowKeyModal(false)} className="text-slate-400 hover:text-slate-600">
-                <X size={20} />
-              </button>
+              <h3 className="text-lg font-bold flex items-center gap-2"><Key className="text-blue-600" size={20} /> Gemini API 키 입력</h3>
+              <button onClick={() => setShowKeyModal(false)} className="text-slate-400 hover:text-slate-600"><X size={20} /></button>
             </div>
-            <p className="text-sm text-slate-500 mb-4 leading-relaxed">
-              이 앱을 사용하려면 Google Gemini API 키가 필요합니다. 키가 없다면 아래 링크에서 무료로 발급받으실 수 있습니다.
-            </p>
-            <a 
-              href="https://aistudio.google.com/app/api-keys?hl=ko" 
-              target="_blank" 
-              rel="noopener noreferrer"
-              className="text-blue-600 hover:underline text-sm flex items-center gap-1 mb-6"
-            >
-              Gemini API 키 발급받기 (무료)
-              <ExternalLink size={14} />
-            </a>
             <input 
               type="password"
               placeholder="API 키를 입력하세요"
-              value={temp
+              value={tempKey}
+              onChange={(e) => setTempKey(e.target.value)}
+              className="w-full px-4 py-2 border border-slate-200 rounded-lg mb-4 focus:ring-2 focus:ring-blue-500 outline-none"
+            />
+            <button onClick={handleSaveKey} className="w-full py-3 bg-blue-600 text-white font-bold rounded-xl hover:bg-blue-700 transition-colors">저장 및 시작하기</button>
+          </div>
+        </div>
+      )}
+
+      {(state.step !== 'idle' && state.step !== 'ready' || state.isExporting) && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-md z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl p-8 max-w-md w-full shadow-2xl flex flex-col items-center text-center">
+            <Loader2 className="w-12 h-12 text-blue-600 animate-spin mb-4" />
+            <h3 className="text-xl font-bold mb-2">{state.isExporting ? "동영상 파일 생성 중" : "프레젠테이션 제작 중"}</h3>
+            <div className="w-full bg-slate-100 h-2 rounded-full overflow-hidden mt-4">
+              <div className="h-full bg-blue-600 transition-all duration-500" style={{ width: state.isExporting ? '100%' : `${state.progress}%` }} />
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+export default App;
