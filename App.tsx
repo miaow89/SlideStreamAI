@@ -1,26 +1,15 @@
-
 import React, { useState, useEffect, useRef } from 'react';
-import { Video, Download, Key, X, Loader2, ShieldCheck, ShieldAlert, AlertCircle, ExternalLink } from 'lucide-react';
+import { Video, Download, Key, X, Loader2, ServerOff, AlertCircle } from 'lucide-react';
 import { AppState, SlideData, NarrationSegment, AppLanguage } from './types';
 import { processPdf } from './services/pdf';
-import { generateScripts, generateAudio, decodeAudioData, validateApiKey } from './services/gemini';
+import { generateScripts, generateAudio, decodeAudioData } from './services/gemini';
 import Dashboard from './components/Dashboard';
 import PresentationPlayer from './components/PresentationPlayer';
 
-// Fix: Define the aistudio property directly on the global Window interface to prevent type mismatch and modifier errors.
-declare global {
-  interface Window {
-    aistudio: {
-      hasSelectedApiKey: () => Promise<boolean>;
-      openSelectKey: () => Promise<void>;
-    };
-  }
-}
-
 const App: React.FC = () => {
-  const [isKeyValidated, setIsKeyValidated] = useState<boolean>(false);
-  const [isValidating, setIsValidating] = useState<boolean>(false);
+  const [apiKey, setApiKey] = useState<string>(localStorage.getItem('GEMINI_API_KEY') || process.env.API_KEY || '');
   const [showKeyModal, setShowKeyModal] = useState<boolean>(false);
+  const [tempKey, setTempKey] = useState<string>('');
   
   const [state, setState] = useState<AppState>({
     files: [],
@@ -35,46 +24,18 @@ const App: React.FC = () => {
     error: null,
   });
 
-  const checkAndValidateKey = async () => {
-    const apiKey = process.env.API_KEY;
-    if (!apiKey) {
-      setShowKeyModal(true);
-      return;
-    }
-
-    setIsValidating(true);
-    try {
-      const isValid = await validateApiKey(apiKey);
-      setIsKeyValidated(isValid);
-      if (isValid) {
-        setShowKeyModal(false);
-      } else {
-        setShowKeyModal(true);
-      }
-    } catch (err: any) {
-      setIsKeyValidated(false);
-      setShowKeyModal(true);
-    } finally {
-      setIsValidating(false);
-    }
-  };
+  // For Browser Recording
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
   useEffect(() => {
-    checkAndValidateKey();
-  }, []);
+    if (!apiKey) setShowKeyModal(true);
+  }, [apiKey]);
 
-  const handleOpenKeySelector = async () => {
-    if (window.aistudio) {
-      try {
-        await window.aistudio.openSelectKey();
-        // Proceed as if successful per guidelines to mitigate race condition
-        setIsKeyValidated(true);
-        setShowKeyModal(false);
-        // Verify key in background
-        checkAndValidateKey();
-      } catch (e) {
-        console.error("Key selection failed", e);
-      }
+  const handleSaveKey = () => {
+    if (tempKey.trim()) {
+      setApiKey(tempKey.trim());
+      localStorage.setItem('GEMINI_API_KEY', tempKey.trim());
+      setShowKeyModal(false);
     }
   };
 
@@ -88,11 +49,7 @@ const App: React.FC = () => {
   };
 
   const handleStartGeneration = async () => {
-    const apiKey = process.env.API_KEY;
-    if (!apiKey || !isKeyValidated) {
-      setShowKeyModal(true);
-      return;
-    }
+    if (!apiKey) { setShowKeyModal(true); return; }
     if (state.files.length === 0) return;
 
     try {
@@ -111,7 +68,7 @@ const App: React.FC = () => {
         }
       }
 
-      if (allSlides.length === 0) throw new Error("No valid slides found in uploaded files.");
+      if (allSlides.length === 0) throw new Error("유효한 슬라이드를 찾을 수 없습니다.");
 
       setState(prev => ({ ...prev, slides: allSlides, step: 'scripting', progress: 30 }));
 
@@ -128,30 +85,21 @@ const App: React.FC = () => {
       const voice = state.language === 'ko' ? 'Kore' : 'Zephyr';
 
       for (let i = 0; i < updatedNarrations.length; i++) {
-        try {
-          const audioData = await generateAudio(updatedNarrations[i].script, apiKey, voice);
-          const buffer = await decodeAudioData(audioData, audioCtx);
-          updatedNarrations[i].audioBuffer = buffer;
-          
-          setState(prev => ({ 
-            ...prev, 
-            narrations: [...updatedNarrations],
-            progress: 60 + Math.floor(((i + 1) / updatedNarrations.length) * 35) 
-          }));
-        } catch (audioErr) {
-          console.error(`Failed to generate audio for slide ${i}`, audioErr);
-        }
+        const audioData = await generateAudio(updatedNarrations[i].script, apiKey, voice);
+        const buffer = await decodeAudioData(audioData, audioCtx);
+        updatedNarrations[i].audioBuffer = buffer;
+        
+        setState(prev => ({ 
+          ...prev, 
+          narrations: [...updatedNarrations],
+          progress: 60 + Math.floor(((i + 1) / updatedNarrations.length) * 35) 
+        }));
       }
 
       setState(prev => ({ ...prev, step: 'ready', progress: 100 }));
     } catch (err: any) {
       console.error(err);
-      const errorMsg = err.message || "An unexpected error occurred during generation.";
-      if (errorMsg.includes("Requested entity was not found")) {
-        setIsKeyValidated(false);
-        setShowKeyModal(true);
-      }
-      setState(prev => ({ ...prev, step: 'idle', error: errorMsg }));
+      setState(prev => ({ ...prev, step: 'idle', error: err.message || "생성 중 오류가 발생했습니다." }));
     }
   };
 
@@ -169,7 +117,7 @@ const App: React.FC = () => {
       const ctx = canvas.getContext('2d');
       if (!ctx) throw new Error("Canvas context failed");
 
-      const stream = canvas.captureStream(30); 
+      const stream = canvas.captureStream(30); // 30 FPS
       stream.addTrack(dest.stream.getAudioTracks()[0]);
 
       const recorder = new MediaRecorder(stream, { mimeType: 'video/webm;codecs=vp9,opus' });
@@ -195,11 +143,12 @@ const App: React.FC = () => {
 
         setState(prev => ({ ...prev, progress: Math.floor((i / state.slides.length) * 100) }));
 
+        // Draw slide
         const img = new Image();
         img.src = slide.image;
         await new Promise((res) => { img.onload = res; });
         
-        ctx.fillStyle = '#0f172a'; 
+        ctx.fillStyle = '#0f172a'; // Slate-900
         ctx.fillRect(0, 0, canvas.width, canvas.height);
         
         const scale = Math.min(canvas.width / img.width, canvas.height / img.height);
@@ -207,6 +156,7 @@ const App: React.FC = () => {
         const y = (canvas.height / 2) - (img.height / 2) * scale;
         ctx.drawImage(img, x, y, img.width * scale, img.height * scale);
 
+        // Play audio segment
         const source = audioCtx.createBufferSource();
         source.buffer = narration.audioBuffer;
         source.connect(dest);
@@ -220,7 +170,7 @@ const App: React.FC = () => {
       recorder.stop();
     } catch (err: any) {
       console.error(err);
-      setState(prev => ({ ...prev, error: "Failed to record video presentation.", isExporting: false }));
+      setState(prev => ({ ...prev, error: "동영상 녹화 중 오류가 발생했습니다.", isExporting: false }));
     }
   };
 
@@ -233,16 +183,12 @@ const App: React.FC = () => {
             <h1 className="text-xl font-bold text-slate-900">SlideStream AI</h1>
           </div>
           <div className="flex items-center gap-4">
-            <div className={`flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold ${isKeyValidated ? 'bg-green-50 text-green-700' : 'bg-amber-50 text-amber-700'}`}>
-              {isValidating ? <Loader2 size={14} className="animate-spin" /> : (isKeyValidated ? <ShieldCheck size={14} /> : <ShieldAlert size={14} />)}
-              {isValidating ? 'Validating...' : (isKeyValidated ? 'Connected' : 'Key Error')}
-            </div>
             <button onClick={() => setShowKeyModal(true)} className="text-slate-500 hover:text-blue-600 flex items-center gap-1 text-sm font-medium">
-              <Key size={14} /> API Key Setup
+              <Key size={14} /> API 키 설정
             </button>
             {state.step === 'ready' && (
               <button onClick={() => setState(prev => ({ ...prev, step: 'idle', files: [], error: null }))} className="text-sm font-medium text-slate-500 hover:text-slate-900">
-                New Project
+                새로 만들기
               </button>
             )}
           </div>
@@ -254,14 +200,9 @@ const App: React.FC = () => {
           <div className="mb-6 max-w-4xl mx-auto p-6 bg-red-50 border border-red-100 rounded-3xl flex flex-col gap-4 text-red-700 shadow-sm">
             <div className="flex items-start gap-4">
               <div className="bg-red-100 p-2 rounded-xl"><AlertCircle className="text-red-600" size={24} /></div>
-              <div className="text-sm flex-1">
-                <p className="font-bold text-lg mb-1">Error Detected</p>
+              <div className="text-sm">
+                <p className="font-bold text-lg mb-1">문제가 발생했습니다</p>
                 <p className="leading-relaxed text-red-600/80">{state.error}</p>
-                {!isKeyValidated && !isValidating && (
-                  <button onClick={() => setShowKeyModal(true)} className="mt-2 text-xs font-bold text-red-500 underline flex items-center gap-1">
-                    Reconfigure API Key <Key size={12} />
-                  </button>
-                )}
               </div>
             </div>
           </div>
@@ -272,8 +213,8 @@ const App: React.FC = () => {
              <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden p-6">
                 <div className="flex items-center justify-between mb-6 flex-wrap gap-4">
                   <div>
-                    <h2 className="text-2xl font-bold">Presentation Preview</h2>
-                    <p className="text-slate-500 text-sm">Review slides and narration before exporting.</p>
+                    <h2 className="text-2xl font-bold">프레젠테이션 미리보기</h2>
+                    <p className="text-slate-500 text-sm">슬라이드와 AI 음성을 확인하고 동영상으로 내보내세요.</p>
                   </div>
                   <button 
                     onClick={handleExportBrowser}
@@ -281,7 +222,7 @@ const App: React.FC = () => {
                     className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 disabled:bg-slate-300 text-white px-6 py-2.5 rounded-xl font-bold transition-all shadow-lg shadow-blue-500/20"
                   >
                     {state.isExporting ? <Loader2 size={18} className="animate-spin" /> : <Download size={18} />}
-                    {state.isExporting ? `Encoding Video (${state.progress}%)` : "Export as .webm"}
+                    {state.isExporting ? `동영상 녹화 중 (${state.progress}%)` : "동영상 저장 (.webm)"}
                   </button>
                 </div>
                 <PresentationPlayer slides={state.slides} narrations={state.narrations} />
@@ -300,41 +241,21 @@ const App: React.FC = () => {
       </main>
 
       {showKeyModal && (
-        <div className="fixed inset-0 bg-slate-900/80 backdrop-blur-md z-[100] flex items-center justify-center p-4">
-          <div className="bg-white rounded-3xl p-8 max-w-md w-full shadow-2xl">
-            <div className="flex justify-between items-center mb-6">
-              <div className="bg-blue-50 p-3 rounded-2xl">
-                <Key className="text-blue-600" size={28} />
-              </div>
-              <button onClick={() => setShowKeyModal(false)} className="text-slate-400 hover:text-slate-600 transition-colors p-2 hover:bg-slate-100 rounded-full">
-                <X size={24} />
-              </button>
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[60] flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl p-6 max-w-md w-full shadow-2xl">
+            <div className="flex justify-between items-center mb-4">
+              <h3 className="text-lg font-bold flex items-center gap-2"><Key className="text-blue-600" size={20} /> Gemini API 키 입력</h3>
+              <button onClick={() => setShowKeyModal(false)} className="text-slate-400 hover:text-slate-600"><X size={20} /></button>
             </div>
-            
-            <h3 className="text-2xl font-bold text-slate-900 mb-3">API Key Required</h3>
-            <p className="text-slate-600 mb-6 leading-relaxed">
-              To use SlideStream AI, you must select an API key from a <strong>paid Google Cloud project</strong>.
-            </p>
-
-            <div className="space-y-4">
-              <button 
-                onClick={handleOpenKeySelector}
-                className="w-full py-4 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-2xl shadow-xl shadow-blue-500/25 transition-all flex items-center justify-center gap-3 text-lg"
-              >
-                <Key size={20} />
-                Select API Key
-              </button>
-              
-              <a 
-                href="https://ai.google.dev/gemini-api/docs/billing" 
-                target="_blank" 
-                rel="noopener noreferrer"
-                className="w-full py-4 bg-slate-50 hover:bg-slate-100 text-slate-700 font-semibold rounded-2xl transition-all flex items-center justify-center gap-2 border border-slate-200"
-              >
-                <ExternalLink size={18} />
-                Billing Documentation
-              </a>
-            </div>
+            <p className="text-sm text-slate-500 mb-4">Gemini 2.5 및 3 모델을 사용하기 위한 API 키가 필요합니다.</p>
+            <input 
+              type="password"
+              placeholder="API 키를 입력하세요"
+              value={tempKey}
+              onChange={(e) => setTempKey(e.target.value)}
+              className="w-full px-4 py-3 border border-slate-200 rounded-lg mb-4 focus:ring-2 focus:ring-blue-500 outline-none"
+            />
+            <button onClick={handleSaveKey} className="w-full py-3 bg-blue-600 text-white font-bold rounded-xl hover:bg-blue-700 transition-colors">저장 및 계속하기</button>
           </div>
         </div>
       )}
@@ -348,11 +269,11 @@ const App: React.FC = () => {
                 {state.progress}%
               </div>
             </div>
-            <h3 className="text-xl font-bold mb-2">{state.isExporting ? "Encoding Video" : "Processing Presentation"}</h3>
+            <h3 className="text-xl font-bold mb-2">{state.isExporting ? "동영상 인코딩 중" : "프레젠테이션 제작 중"}</h3>
             <p className="text-slate-500 text-sm leading-relaxed">
               {state.isExporting 
-                ? "Recording slides directly in the browser. Please keep this tab active." 
-                : "AI is analyzing slides and generating narration audio."}
+                ? "브라우저에서 직접 슬라이드를 녹화하고 있습니다. 탭을 끄지 마세요." 
+                : "AI가 슬라이드를 분석하고 음성을 생성하고 있습니다."}
             </p>
             <div className="w-full bg-slate-100 h-2 rounded-full overflow-hidden mt-6">
               <div className="h-full bg-blue-600 transition-all duration-500" style={{ width: `${state.progress}%` }} />

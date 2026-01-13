@@ -1,25 +1,6 @@
 
 import { GoogleGenAI, Modality, Type } from "@google/genai";
 
-/**
- * Validates the API key by attempting a simple content generation call.
- */
-export const validateApiKey = async (apiKey: string): Promise<boolean> => {
-  try {
-    const ai = new GoogleGenAI({ apiKey });
-    // Fix: Use the standard model name for flash lite as per guidelines
-    const response = await ai.models.generateContent({
-      model: 'gemini-flash-lite-latest',
-      contents: [{ parts: [{ text: 'hi' }] }],
-      config: { maxOutputTokens: 1 }
-    });
-    return !!response.text;
-  } catch (e) {
-    console.error("API Key validation failed:", e);
-    return false;
-  }
-};
-
 export const generateScripts = async (
   slides: { index: number; image: string; text: string }[],
   totalDurationSec: number,
