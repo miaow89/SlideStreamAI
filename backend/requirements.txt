@@ -2,7 +2,9 @@
 fastapi
 uvicorn
 pymupdf
-moviepy
+moviepy==1.0.3
 openai
 python-multipart
 google-generativeai
+pydantic
+pydantic-settings

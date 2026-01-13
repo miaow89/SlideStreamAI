@@ -27,7 +27,6 @@ const App: React.FC = () => {
   });
 
   useEffect(() => {
-    // API 키가 없으면 모달을 띄웁니다.
     if (!apiKey) {
       setShowKeyModal(true);
     }
@@ -41,9 +40,10 @@ const App: React.FC = () => {
     }
   };
 
-  const BACKEND_URL = window.location.hostname === 'localhost' 
+  // 로컬 호스트인 경우 8000번 포트 사용, 아닌 경우 실제 배포된 백엔드 URL 사용
+  const BACKEND_URL = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
     ? 'http://localhost:8000' 
-    : 'https://your-backend-service.onrender.com';
+    : 'https://slidestream-backend.onrender.com'; // 사용자의 실제 백엔드 주소로 변경 필요
 
   const fileToBase64 = (file: File): Promise<string> => {
     return new Promise((resolve, reject) => {
@@ -77,7 +77,7 @@ const App: React.FC = () => {
         }
       }
 
-      if (allSlides.length === 0) throw new Error("No valid slides found.");
+      if (allSlides.length === 0) throw new Error("유효한 슬라이드를 찾을 수 없습니다.");
 
       setState(prev => ({ ...prev, slides: allSlides, step: 'scripting', progress: 30 }));
 
@@ -108,12 +108,19 @@ const App: React.FC = () => {
       setState(prev => ({ ...prev, step: 'ready', progress: 100 }));
     } catch (err: any) {
       console.error(err);
-      setState(prev => ({ ...prev, step: 'idle', error: err.message || "An error occurred during generation." }));
+      setState(prev => ({ ...prev, step: 'idle', error: err.message || "생성 중 오류가 발생했습니다." }));
     }
   };
 
   const handleExport = async () => {
     if (state.slides.length === 0 || state.narrations.length === 0) return;
+    
+    // 기본 플레이스홀더 주소인 경우 경고
+    if (BACKEND_URL.includes('your-backend-service')) {
+      setState(prev => ({ ...prev, error: "백엔드 서버 주소가 설정되지 않았습니다. 로컬에서 실행 중이라면 python backend/main.py를 실행하세요." }));
+      return;
+    }
+
     setState(prev => ({ ...prev, isExporting: true, error: null }));
 
     try {
@@ -125,7 +132,10 @@ const App: React.FC = () => {
 
         const wavBlob = audioBufferToWav(narration.audioBuffer);
         const audioBase64 = await blobToBase64(wavBlob);
-        payloadSlides.push({ image_base64: slide.image, audio_base64: audioBase64 });
+        payloadSlides.push({ 
+          image_base64: slide.image, 
+          audio_base64: audioBase64 
+        });
       }
 
       const response = await fetch(`${BACKEND_URL}/api/generate-video`, {
@@ -134,7 +144,10 @@ const App: React.FC = () => {
         body: JSON.stringify({ slides: payloadSlides })
       });
 
-      if (!response.ok) throw new Error("비디오 생성 서버 응답 실패");
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ detail: "서버 응답 오류" }));
+        throw new Error(errorData.detail || "동영상 생성 실패");
+      }
 
       const videoBlob = await response.blob();
       const url = window.URL.createObjectURL(videoBlob);
@@ -147,7 +160,7 @@ const App: React.FC = () => {
       document.body.removeChild(a);
     } catch (err: any) {
       console.error(err);
-      setState(prev => ({ ...prev, error: `내보내기 실패: ${err.message}` }));
+      setState(prev => ({ ...prev, error: `내보내기 실패: ${err.message}. 백엔드 서버가 실행 중인지 확인하세요.` }));
     } finally {
       setState(prev => ({ ...prev, isExporting: false }));
     }
@@ -173,7 +186,7 @@ const App: React.FC = () => {
             </button>
             {state.step === 'ready' && (
               <button 
-                onClick={() => setState(prev => ({ ...prev, step: 'idle', files: [] }))}
+                onClick={() => setState(prev => ({ ...prev, step: 'idle', files: [], error: null }))}
                 className="text-sm font-medium text-slate-500 hover:text-slate-900"
               >
                 새로 만들기
@@ -184,6 +197,16 @@ const App: React.FC = () => {
       </header>
 
       <main className="max-w-7xl mx-auto px-4 py-8">
+        {state.error && (
+          <div className="mb-6 max-w-4xl mx-auto p-4 bg-red-50 border border-red-100 rounded-xl flex items-start gap-3 text-red-700">
+            <AlertCircle className="shrink-0 mt-0.5" size={18} />
+            <div className="text-sm">
+              <p className="font-bold">오류 발생</p>
+              <p>{state.error}</p>
+            </div>
+          </div>
+        )}
+
         {state.step === 'ready' ? (
           <div className="max-w-4xl mx-auto space-y-6">
              <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden p-6">
@@ -195,10 +218,10 @@ const App: React.FC = () => {
                   <button 
                     onClick={handleExport}
                     disabled={state.isExporting}
-                    className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 disabled:bg-slate-300 text-white px-6 py-2.5 rounded-xl font-bold transition-all"
+                    className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 disabled:bg-slate-300 text-white px-6 py-2.5 rounded-xl font-bold transition-all shadow-lg shadow-blue-500/20"
                   >
                     {state.isExporting ? <Loader2 size={18} className="animate-spin" /> : <Download size={18} />}
-                    내보내기
+                    {state.isExporting ? "동영상 인코딩 중..." : "MP4 내보내기"}
                   </button>
                 </div>
                 <PresentationPlayer slides={state.slides} narrations={state.narrations} />
@@ -207,7 +230,7 @@ const App: React.FC = () => {
         ) : (
           <Dashboard 
             state={state} 
-            onFilesChange={(files) => setState(prev => ({ ...prev, files: Array.from(files) }))}
+            onFilesChange={(files) => setState(prev => ({ ...prev, files: Array.from(files), error: null }))}
             onDurationChange={(duration) => setState(prev => ({ ...prev, duration }))}
             onStyleChange={(style) => setState(prev => ({ ...prev, style }))}
             onLanguageChange={(language) => setState(prev => ({ ...prev, language }))}
@@ -263,11 +286,21 @@ const App: React.FC = () => {
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-md z-50 flex items-center justify-center p-4">
           <div className="bg-white rounded-3xl p-8 max-w-md w-full shadow-2xl flex flex-col items-center text-center">
             <Loader2 className="w-12 h-12 text-blue-600 animate-spin mb-4" />
-            <h3 className="text-xl font-bold mb-2">프레젠테이션 제작 중</h3>
-            <p className="text-slate-500 text-sm mb-6">AI가 슬라이드를 분석하고 음성을 생성하고 있습니다. 잠시만 기다려 주세요.</p>
+            <h3 className="text-xl font-bold mb-2">
+              {state.isExporting ? "동영상 파일 생성 중" : "프레젠테이션 제작 중"}
+            </h3>
+            <p className="text-slate-500 text-sm mb-6">
+              {state.isExporting 
+                ? "서버에서 고화질 MP4 파일을 합성하고 있습니다. 슬라이드 수에 따라 1~3분 정도 소요될 수 있습니다." 
+                : "AI가 슬라이드를 분석하고 음성을 생성하고 있습니다. 잠시만 기다려 주세요."}
+            </p>
             <div className="w-full bg-slate-100 h-2 rounded-full overflow-hidden">
-              <div className="h-full bg-blue-600 transition-all duration-500" style={{ width: `${state.progress}%` }} />
+              <div 
+                className={`h-full bg-blue-600 transition-all duration-500 ${state.isExporting ? 'animate-pulse' : ''}`} 
+                style={{ width: state.isExporting ? '100%' : `${state.progress}%` }} 
+              />
             </div>
+            {state.isExporting && <p className="mt-4 text-xs text-blue-600 font-medium">인코딩 중에는 창을 닫지 마세요...</p>}
           </div>
         </div>
       )}
