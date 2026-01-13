@@ -1,11 +1,10 @@
 
 import React from 'react';
-import { Upload, Clock, MessageSquare, AlertCircle, Globe, FileText, Image as ImageIcon, ShieldAlert, ShieldCheck } from 'lucide-react';
+import { Upload, Clock, MessageSquare, AlertCircle, Globe, FileText, Image as ImageIcon } from 'lucide-react';
 import { AppState, AppLanguage } from '../types';
 
 interface DashboardProps {
   state: AppState;
-  isKeyValidated: boolean;
   onFilesChange: (files: FileList) => void;
   onDurationChange: (duration: number) => void;
   onStyleChange: (style: string) => void;
@@ -15,7 +14,6 @@ interface DashboardProps {
 
 const Dashboard: React.FC<DashboardProps> = ({ 
   state, 
-  isKeyValidated,
   onFilesChange, 
   onDurationChange, 
   onStyleChange,
@@ -87,6 +85,7 @@ const Dashboard: React.FC<DashboardProps> = ({
                 onChange={(e) => onDurationChange(Number(e.target.value))}
                 className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all outline-none"
               />
+              <p className="text-[10px] text-slate-400">Total duration of the narrated presentation.</p>
             </div>
             <div className="space-y-2">
               <label className="text-sm font-medium flex items-center gap-2">
@@ -123,36 +122,28 @@ const Dashboard: React.FC<DashboardProps> = ({
           </div>
 
           <div className="space-y-2">
-            <label className="text-sm font-medium">Custom Voice Instructions</label>
+            <label className="text-sm font-medium">Additional Custom Voice Instructions</label>
             <textarea 
               rows={3}
-              placeholder="e.g., Speak like a visionary tech leader."
+              placeholder="e.g., Speak like a visionary tech leader. Slow down on technical explanations."
               className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all outline-none resize-none"
               onChange={(e) => onStyleChange(e.target.value)}
             />
           </div>
 
-          {/* API Key Status Indicator for trust */}
-          <div className={`p-4 rounded-xl border flex items-center justify-between ${isKeyValidated ? 'bg-green-50 border-green-100' : 'bg-amber-50 border-amber-100'}`}>
-            <div className="flex items-center gap-3">
-              {isKeyValidated ? <ShieldCheck className="text-green-600" size={20} /> : <ShieldAlert className="text-amber-600" size={20} />}
-              <div className="text-sm">
-                <p className={`font-bold ${isKeyValidated ? 'text-green-800' : 'text-amber-800'}`}>
-                  {isKeyValidated ? 'Gemini API 연결됨' : 'API 키 확인 필요'}
-                </p>
-                <p className={isKeyValidated ? 'text-green-600' : 'text-amber-600'}>
-                  {isKeyValidated ? '프레젠테이션 생성이 가능합니다.' : '먼저 API 키를 확인해주세요.'}
-                </p>
-              </div>
+          {state.error && (
+            <div className="p-4 bg-red-50 border border-red-100 rounded-xl flex items-start gap-3 text-red-700">
+              <AlertCircle className="shrink-0 mt-0.5" size={18} />
+              <p className="text-sm">{state.error}</p>
             </div>
-          </div>
+          )}
 
           <button 
             disabled={state.files.length === 0}
             onClick={onGenerate}
             className="w-full py-4 bg-blue-600 hover:bg-blue-700 disabled:bg-slate-300 text-white font-bold rounded-xl shadow-lg shadow-blue-500/25 transition-all flex items-center justify-center gap-2 text-lg"
           >
-            {isKeyValidated ? '비디오 프레젠테이션 생성' : 'API 키 먼저 확인하기'}
+            Generate Video Presentation
           </button>
         </div>
       </div>
@@ -167,6 +158,9 @@ const Dashboard: React.FC<DashboardProps> = ({
           </div>
           <h3 className="text-white text-xl font-bold mb-2">Real-time Preview</h3>
           <p className="text-slate-400">Your generated presentation video will appear here. Upload files to get started.</p>
+        </div>
+        <div className="absolute bottom-6 left-6 right-6 h-1.5 bg-slate-800 rounded-full overflow-hidden">
+          <div className="h-full w-1/3 bg-blue-600/50" />
         </div>
       </div>
     </div>

@@ -2,14 +2,14 @@
 import { GoogleGenAI, Modality, Type } from "@google/genai";
 
 /**
- * API 키가 유효한지 간단한 모델 리스트 확인이나 헬로 월드 호출로 검증합니다.
+ * Validates the API key by attempting a simple content generation call.
  */
 export const validateApiKey = async (apiKey: string): Promise<boolean> => {
   try {
     const ai = new GoogleGenAI({ apiKey });
-    // 가장 가벼운 모델로 아주 짧은 텍스트 생성을 시도하여 키 작동 여부 확인
+    // Fix: Use the standard model name for flash lite as per guidelines
     const response = await ai.models.generateContent({
-      model: 'gemini-3-flash-lite-latest',
+      model: 'gemini-flash-lite-latest',
       contents: [{ parts: [{ text: 'hi' }] }],
       config: { maxOutputTokens: 1 }
     });
