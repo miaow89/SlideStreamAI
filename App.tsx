@@ -1,9 +1,8 @@
-import React, { useState, useEffect, useCallback } from 'react';
-import { Upload, Play, Clock, MessageSquare, CheckCircle2, Loader2, Video, Download, AlertCircle, ExternalLink, Key, X, Terminal, ServerOff } from 'lucide-react';
-import { AppState, ProcessingStep, SlideData, NarrationSegment, AppLanguage } from './types';
+import React, { useState, useEffect, useRef } from 'react';
+import { Video, Download, Key, X, Loader2, ServerOff, AlertCircle } from 'lucide-react';
+import { AppState, SlideData, NarrationSegment, AppLanguage } from './types';
 import { processPdf } from './services/pdf';
 import { generateScripts, generateAudio, decodeAudioData } from './services/gemini';
-import { audioBufferToWav, blobToBase64 } from './services/audioUtils';
 import Dashboard from './components/Dashboard';
 import PresentationPlayer from './components/PresentationPlayer';
 
@@ -25,10 +24,11 @@ const App: React.FC = () => {
     error: null,
   });
 
+  // For Browser Recording
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+
   useEffect(() => {
-    if (!apiKey) {
-      setShowKeyModal(true);
-    }
+    if (!apiKey) setShowKeyModal(true);
   }, [apiKey]);
 
   const handleSaveKey = () => {
@@ -38,12 +38,6 @@ const App: React.FC = () => {
       setShowKeyModal(false);
     }
   };
-
-  const BACKEND_URL = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
-    ? 'http://localhost:8000' 
-    : 'https://slidestream-backend.onrender.com';
-
-  const isDeployedOnGitHub = window.location.hostname.includes('github.io');
 
   const fileToBase64 = (file: File): Promise<string> => {
     return new Promise((resolve, reject) => {
@@ -55,10 +49,7 @@ const App: React.FC = () => {
   };
 
   const handleStartGeneration = async () => {
-    if (!apiKey) {
-      setShowKeyModal(true);
-      return;
-    }
+    if (!apiKey) { setShowKeyModal(true); return; }
     if (state.files.length === 0) return;
 
     try {
@@ -112,56 +103,74 @@ const App: React.FC = () => {
     }
   };
 
-  const handleExport = async () => {
+  const handleExportBrowser = async () => {
     if (state.slides.length === 0 || state.narrations.length === 0) return;
-    setState(prev => ({ ...prev, isExporting: true, error: null }));
+    setState(prev => ({ ...prev, isExporting: true, progress: 0 }));
 
     try {
-      const payloadSlides = [];
+      const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
+      const dest = audioCtx.createMediaStreamDestination();
+      
+      const canvas = document.createElement('canvas');
+      canvas.width = 1280;
+      canvas.height = 720;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) throw new Error("Canvas context failed");
+
+      const stream = canvas.captureStream(30); // 30 FPS
+      stream.addTrack(dest.stream.getAudioTracks()[0]);
+
+      const recorder = new MediaRecorder(stream, { mimeType: 'video/webm;codecs=vp9,opus' });
+      const chunks: Blob[] = [];
+      recorder.ondataavailable = (e) => chunks.push(e.data);
+      
+      recorder.onstop = () => {
+        const blob = new Blob(chunks, { type: 'video/webm' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `SlideStream_${new Date().getTime()}.webm`;
+        a.click();
+        setState(prev => ({ ...prev, isExporting: false }));
+      };
+
+      recorder.start();
+
       for (let i = 0; i < state.slides.length; i++) {
         const slide = state.slides[i];
         const narration = state.narrations.find(n => n.slideIndex === slide.index);
         if (!narration?.audioBuffer) continue;
 
-        const wavBlob = audioBufferToWav(narration.audioBuffer);
-        const audioBase64 = await blobToBase64(wavBlob);
-        payloadSlides.push({ 
-          image_base64: slide.image, 
-          audio_base64: audioBase64 
-        });
+        setState(prev => ({ ...prev, progress: Math.floor((i / state.slides.length) * 100) }));
+
+        // Draw slide
+        const img = new Image();
+        img.src = slide.image;
+        await new Promise((res) => { img.onload = res; });
+        
+        ctx.fillStyle = '#0f172a'; // Slate-900
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        
+        const scale = Math.min(canvas.width / img.width, canvas.height / img.height);
+        const x = (canvas.width / 2) - (img.width / 2) * scale;
+        const y = (canvas.height / 2) - (img.height / 2) * scale;
+        ctx.drawImage(img, x, y, img.width * scale, img.height * scale);
+
+        // Play audio segment
+        const source = audioCtx.createBufferSource();
+        source.buffer = narration.audioBuffer;
+        source.connect(dest);
+        source.connect(audioCtx.destination);
+        
+        const playPromise = new Promise((res) => { source.onended = res; });
+        source.start();
+        await playPromise;
       }
 
-      const response = await fetch(`${BACKEND_URL}/api/generate-video`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ slides: payloadSlides })
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({ detail: "서버 응답 오류" }));
-        throw new Error(errorData.detail || "동영상 생성 실패");
-      }
-
-      const videoBlob = await response.blob();
-      const url = window.URL.createObjectURL(videoBlob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `SlideStream_${new Date().getTime()}.mp4`;
-      document.body.appendChild(a);
-      a.click();
-      window.URL.revokeObjectURL(url);
-      document.body.removeChild(a);
+      recorder.stop();
     } catch (err: any) {
       console.error(err);
-      let errorMsg = `내보내기 실패: ${err.message}.`;
-      if (err.message === 'Failed to fetch') {
-        errorMsg = isDeployedOnGitHub 
-          ? "GitHub Pages는 정적 사이트이므로 동영상 합성을 위한 Python 서버가 필요합니다. 로컬에서 서버를 실행하거나 별도로 배포하세요."
-          : "백엔드 서버에 연결할 수 없습니다. Python 서버가 실행 중인지 확인하세요.";
-      }
-      setState(prev => ({ ...prev, error: errorMsg }));
-    } finally {
-      setState(prev => ({ ...prev, isExporting: false }));
+      setState(prev => ({ ...prev, error: "동영상 녹화 중 오류가 발생했습니다.", isExporting: false }));
     }
   };
 
@@ -170,9 +179,7 @@ const App: React.FC = () => {
       <header className="bg-white border-b border-slate-200 sticky top-0 z-10">
         <div className="max-w-7xl mx-auto px-4 h-16 flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <div className="bg-blue-600 p-2 rounded-lg">
-              <Video className="text-white" size={20} />
-            </div>
+            <div className="bg-blue-600 p-2 rounded-lg"><Video className="text-white" size={20} /></div>
             <h1 className="text-xl font-bold text-slate-900">SlideStream AI</h1>
           </div>
           <div className="flex items-center gap-4">
@@ -192,7 +199,7 @@ const App: React.FC = () => {
         {state.error && (
           <div className="mb-6 max-w-4xl mx-auto p-6 bg-red-50 border border-red-100 rounded-3xl flex flex-col gap-4 text-red-700 shadow-sm">
             <div className="flex items-start gap-4">
-              <div className="bg-red-100 p-2 rounded-xl"><ServerOff className="text-red-600" size={24} /></div>
+              <div className="bg-red-100 p-2 rounded-xl"><AlertCircle className="text-red-600" size={24} /></div>
               <div className="text-sm">
                 <p className="font-bold text-lg mb-1">문제가 발생했습니다</p>
                 <p className="leading-relaxed text-red-600/80">{state.error}</p>
@@ -207,15 +214,15 @@ const App: React.FC = () => {
                 <div className="flex items-center justify-between mb-6 flex-wrap gap-4">
                   <div>
                     <h2 className="text-2xl font-bold">프레젠테이션 미리보기</h2>
-                    <p className="text-slate-500 text-sm">슬라이드와 AI 음성을 확인하고 MP4로 내보내세요.</p>
+                    <p className="text-slate-500 text-sm">슬라이드와 AI 음성을 확인하고 동영상으로 내보내세요.</p>
                   </div>
                   <button 
-                    onClick={handleExport}
+                    onClick={handleExportBrowser}
                     disabled={state.isExporting}
                     className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 disabled:bg-slate-300 text-white px-6 py-2.5 rounded-xl font-bold transition-all shadow-lg shadow-blue-500/20"
                   >
                     {state.isExporting ? <Loader2 size={18} className="animate-spin" /> : <Download size={18} />}
-                    {state.isExporting ? "동영상 인코딩 중..." : "MP4 내보내기"}
+                    {state.isExporting ? `동영상 녹화 중 (${state.progress}%)` : "동영상 저장 (.webm)"}
                   </button>
                 </div>
                 <PresentationPlayer slides={state.slides} narrations={state.narrations} />
@@ -240,14 +247,15 @@ const App: React.FC = () => {
               <h3 className="text-lg font-bold flex items-center gap-2"><Key className="text-blue-600" size={20} /> Gemini API 키 입력</h3>
               <button onClick={() => setShowKeyModal(false)} className="text-slate-400 hover:text-slate-600"><X size={20} /></button>
             </div>
+            <p className="text-sm text-slate-500 mb-4">Gemini 2.5 및 3 모델을 사용하기 위한 API 키가 필요합니다.</p>
             <input 
               type="password"
               placeholder="API 키를 입력하세요"
               value={tempKey}
               onChange={(e) => setTempKey(e.target.value)}
-              className="w-full px-4 py-2 border border-slate-200 rounded-lg mb-4 focus:ring-2 focus:ring-blue-500 outline-none"
+              className="w-full px-4 py-3 border border-slate-200 rounded-lg mb-4 focus:ring-2 focus:ring-blue-500 outline-none"
             />
-            <button onClick={handleSaveKey} className="w-full py-3 bg-blue-600 text-white font-bold rounded-xl hover:bg-blue-700 transition-colors">저장 및 시작하기</button>
+            <button onClick={handleSaveKey} className="w-full py-3 bg-blue-600 text-white font-bold rounded-xl hover:bg-blue-700 transition-colors">저장 및 계속하기</button>
           </div>
         </div>
       )}
@@ -255,10 +263,20 @@ const App: React.FC = () => {
       {(state.step !== 'idle' && state.step !== 'ready' || state.isExporting) && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-md z-50 flex items-center justify-center p-4">
           <div className="bg-white rounded-3xl p-8 max-w-md w-full shadow-2xl flex flex-col items-center text-center">
-            <Loader2 className="w-12 h-12 text-blue-600 animate-spin mb-4" />
-            <h3 className="text-xl font-bold mb-2">{state.isExporting ? "동영상 파일 생성 중" : "프레젠테이션 제작 중"}</h3>
-            <div className="w-full bg-slate-100 h-2 rounded-full overflow-hidden mt-4">
-              <div className="h-full bg-blue-600 transition-all duration-500" style={{ width: state.isExporting ? '100%' : `${state.progress}%` }} />
+            <div className="relative mb-6">
+              <Loader2 className="w-16 h-16 text-blue-600 animate-spin" />
+              <div className="absolute inset-0 flex items-center justify-center font-bold text-xs text-blue-600">
+                {state.progress}%
+              </div>
+            </div>
+            <h3 className="text-xl font-bold mb-2">{state.isExporting ? "동영상 인코딩 중" : "프레젠테이션 제작 중"}</h3>
+            <p className="text-slate-500 text-sm leading-relaxed">
+              {state.isExporting 
+                ? "브라우저에서 직접 슬라이드를 녹화하고 있습니다. 탭을 끄지 마세요." 
+                : "AI가 슬라이드를 분석하고 음성을 생성하고 있습니다."}
+            </p>
+            <div className="w-full bg-slate-100 h-2 rounded-full overflow-hidden mt-6">
+              <div className="h-full bg-blue-600 transition-all duration-500" style={{ width: `${state.progress}%` }} />
             </div>
           </div>
         </div>
