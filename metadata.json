@@ -1,0 +1,8 @@
+{
+  "name": "SlideStream AI",
+  "description": "Convert PDF presentations into professional AI-voiced video presentations with high-quality narration.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone"
+  ]
+}
