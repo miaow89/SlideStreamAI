@@ -19,7 +19,7 @@ const App: React.FC = () => {
     style: 'An atmospheric tone that reveals the truth',
     language: 'ko',
     aspectRatio: '16:9',
-    resolutionScale: 1,
+    resolutionScale: 4,
     slides: [],
     narrations: [],
     step: 'idle',
