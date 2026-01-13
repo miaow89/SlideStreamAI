@@ -1,6 +1,7 @@
+
 import React, { useState, useEffect, useRef } from 'react';
 import { Video, Download, Key, X, Loader2, Music, AlertCircle } from 'lucide-react';
-import { AppState, SlideData, NarrationSegment, AppLanguage } from './types';
+import { AppState, SlideData, NarrationSegment, AppLanguage, AspectRatio, ResolutionScale } from './types';
 import { processPdf } from './services/pdf';
 import { generateScripts, generateAudio, decodeAudioData } from './services/gemini';
 import { audioBufferToWav } from './services/audioUtils';
@@ -8,7 +9,6 @@ import Dashboard from './components/Dashboard';
 import PresentationPlayer from './components/PresentationPlayer';
 
 const App: React.FC = () => {
-  // Initialize state only with process.env.API_KEY, removing localStorage.getItem
   const [apiKey, setApiKey] = useState<string>(process.env.API_KEY || '');
   const [showKeyModal, setShowKeyModal] = useState<boolean>(false);
   const [tempKey, setTempKey] = useState<string>('');
@@ -18,6 +18,8 @@ const App: React.FC = () => {
     duration: 120,
     style: 'An atmospheric tone that reveals the truth',
     language: 'ko',
+    aspectRatio: '16:9',
+    resolutionScale: 1,
     slides: [],
     narrations: [],
     step: 'idle',
@@ -27,14 +29,12 @@ const App: React.FC = () => {
   });
 
   useEffect(() => {
-    // Show modal every time if apiKey is not set
     if (!apiKey) setShowKeyModal(true);
   }, [apiKey]);
 
   const handleSaveKey = () => {
     if (tempKey.trim()) {
       setApiKey(tempKey.trim());
-      // Removed localStorage.setItem to avoid persisting the key
       setShowKeyModal(false);
     }
   };
@@ -109,7 +109,6 @@ const App: React.FC = () => {
     try {
       const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
       const validNarrations = state.narrations.filter(n => n.audioBuffer);
-      
       if (validNarrations.length === 0) return;
 
       const totalLength = validNarrations.reduce((acc, n) => acc + (n.audioBuffer?.length || 0), 0);
@@ -143,18 +142,45 @@ const App: React.FC = () => {
 
     try {
       const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
-      const dest = audioCtx.createMediaStreamDestination();
+      if (audioCtx.state === 'suspended') await audioCtx.resume();
       
+      const dest = audioCtx.createMediaStreamDestination();
       const canvas = document.createElement('canvas');
-      canvas.width = 1280;
-      canvas.height = 720;
+      
+      let baseWidth = 1280;
+      let baseHeight = 720;
+      
+      switch (state.aspectRatio) {
+        case '9:16': baseWidth = 720; baseHeight = 1280; break;
+        case '1:1': baseWidth = 1080; baseHeight = 1080; break;
+        case '4:3': baseWidth = 1024; baseHeight = 768; break;
+        default: baseWidth = 1280; baseHeight = 720; break;
+      }
+
+      canvas.width = baseWidth * state.resolutionScale;
+      canvas.height = baseHeight * state.resolutionScale;
+      
       const ctx = canvas.getContext('2d');
       if (!ctx) throw new Error("Canvas context failed");
+      
+      // QUALITY SETTINGS: Maximize sharpness
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = 'high';
 
-      const stream = canvas.captureStream(30); // 30 FPS
+      const stream = canvas.captureStream(30); 
       stream.addTrack(dest.stream.getAudioTracks()[0]);
 
-      const recorder = new MediaRecorder(stream, { mimeType: 'video/webm;codecs=vp9,opus' });
+      // BITRATE CALCULATION: High bitrate ensures minimal compression artifacts
+      // 10Mbps base for HD, scaled exponentially for higher resolutions.
+      const targetBitrate = 12000000 * state.resolutionScale * state.resolutionScale;
+      // Cap at 100Mbps to avoid browser instability
+      const videoBitsPerSecond = Math.min(targetBitrate, 100000000);
+
+      const recorder = new MediaRecorder(stream, { 
+        mimeType: 'video/webm;codecs=vp9,opus',
+        videoBitsPerSecond: videoBitsPerSecond
+      });
+      
       const chunks: Blob[] = [];
       recorder.ondataavailable = (e) => chunks.push(e.data);
       
@@ -163,7 +189,7 @@ const App: React.FC = () => {
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
-        a.download = `SlideStream_${new Date().getTime()}.webm`;
+        a.download = `SlideStream_${state.aspectRatio.replace(':','x')}_${state.resolutionScale}x_${new Date().getTime()}.webm`;
         a.click();
         setState(prev => ({ ...prev, isExporting: false }));
       };
@@ -173,38 +199,41 @@ const App: React.FC = () => {
       for (let i = 0; i < state.slides.length; i++) {
         const slide = state.slides[i];
         const narration = state.narrations.find(n => n.slideIndex === slide.index);
-        if (!narration?.audioBuffer) continue;
 
         setState(prev => ({ ...prev, progress: Math.floor((i / state.slides.length) * 100) }));
 
-        // Draw slide
         const img = new Image();
         img.src = slide.image;
         await new Promise((res) => { img.onload = res; });
         
-        ctx.fillStyle = '#0f172a'; // Slate-900
+        ctx.fillStyle = '#0f172a';
         ctx.fillRect(0, 0, canvas.width, canvas.height);
         
         const scale = Math.min(canvas.width / img.width, canvas.height / img.height);
         const x = (canvas.width / 2) - (img.width / 2) * scale;
         const y = (canvas.height / 2) - (img.height / 2) * scale;
+        
+        // Draw the high-res source image onto the export canvas
         ctx.drawImage(img, x, y, img.width * scale, img.height * scale);
 
-        // Play audio segment
-        const source = audioCtx.createBufferSource();
-        source.buffer = narration.audioBuffer;
-        source.connect(dest);
-        source.connect(audioCtx.destination);
-        
-        const playPromise = new Promise((res) => { source.onended = res; });
-        source.start();
-        await playPromise;
+        if (narration?.audioBuffer) {
+          const source = audioCtx.createBufferSource();
+          source.buffer = narration.audioBuffer;
+          source.connect(dest);
+          source.connect(audioCtx.destination);
+          
+          const playPromise = new Promise((res) => { source.onended = res; });
+          source.start();
+          await playPromise;
+        } else {
+          await new Promise(resolve => setTimeout(resolve, 3000));
+        }
       }
 
       recorder.stop();
     } catch (err: any) {
       console.error(err);
-      setState(prev => ({ ...prev, error: "동영상 녹화 중 오류가 발생했습니다.", isExporting: false }));
+      setState(prev => ({ ...prev, error: "동영상 녹화 중 오류가 발생했습니다. 브라우저 탭이 활성화된 상태여야 합니다.", isExporting: false }));
     }
   };
 
@@ -278,6 +307,8 @@ const App: React.FC = () => {
             onDurationChange={(duration) => setState(prev => ({ ...prev, duration }))}
             onStyleChange={(style) => setState(prev => ({ ...prev, style }))}
             onLanguageChange={(language) => setState(prev => ({ ...prev, language }))}
+            onAspectRatioChange={(aspectRatio) => setState(prev => ({ ...prev, aspectRatio }))}
+            onResolutionScaleChange={(scale) => setState(prev => ({ ...prev, resolutionScale: scale }))}
             onGenerate={handleStartGeneration}
           />
         )}

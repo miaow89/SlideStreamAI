@@ -1,7 +1,7 @@
 
 import React from 'react';
-import { Upload, Clock, MessageSquare, AlertCircle, Globe, FileText, Image as ImageIcon } from 'lucide-react';
-import { AppState, AppLanguage } from '../types';
+import { Upload, Clock, MessageSquare, AlertCircle, Globe, FileText, Image as ImageIcon, Monitor, Smartphone, Square, Tv, Layers } from 'lucide-react';
+import { AppState, AppLanguage, AspectRatio, ResolutionScale } from '../types';
 
 interface DashboardProps {
   state: AppState;
@@ -9,6 +9,8 @@ interface DashboardProps {
   onDurationChange: (duration: number) => void;
   onStyleChange: (style: string) => void;
   onLanguageChange: (lang: AppLanguage) => void;
+  onAspectRatioChange: (ratio: AspectRatio) => void;
+  onResolutionScaleChange: (scale: ResolutionScale) => void;
   onGenerate: () => void;
 }
 
@@ -18,6 +20,8 @@ const Dashboard: React.FC<DashboardProps> = ({
   onDurationChange, 
   onStyleChange,
   onLanguageChange,
+  onAspectRatioChange,
+  onResolutionScaleChange,
   onGenerate 
 }) => {
   const handleFileDrop = (e: React.DragEvent) => {
@@ -26,6 +30,20 @@ const Dashboard: React.FC<DashboardProps> = ({
       onFilesChange(e.dataTransfer.files);
     }
   };
+
+  const aspectRatios: { value: AspectRatio; label: string; icon: React.ReactNode }[] = [
+    { value: '16:9', label: '16:9 (Landscape)', icon: <Monitor size={16} /> },
+    { value: '9:16', label: '9:16 (Portrait)', icon: <Smartphone size={16} /> },
+    { value: '1:1', label: '1:1 (Square)', icon: <Square size={16} /> },
+    { value: '4:3', label: '4:3 (Classic)', icon: <Tv size={16} /> },
+  ];
+
+  const resolutionScales: { value: ResolutionScale; label: string; sub: string }[] = [
+    { value: 1, label: '1x', sub: 'HD' },
+    { value: 2, label: '2x', sub: '2K / QHD' },
+    { value: 3, label: '3x', sub: '4K / UHD' },
+    { value: 4, label: '4x', sub: '5K+' },
+  ];
 
   return (
     <div className="grid lg:grid-cols-2 gap-8 items-start">
@@ -85,7 +103,6 @@ const Dashboard: React.FC<DashboardProps> = ({
                 onChange={(e) => onDurationChange(Number(e.target.value))}
                 className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all outline-none"
               />
-              <p className="text-[10px] text-slate-400">Total duration of the narrated presentation.</p>
             </div>
             <div className="space-y-2">
               <label className="text-sm font-medium flex items-center gap-2">
@@ -101,6 +118,56 @@ const Dashboard: React.FC<DashboardProps> = ({
                 <option value="en">English (US)</option>
               </select>
             </div>
+
+            {/* Aspect Ratio Selection */}
+            <div className="space-y-2 md:col-span-2">
+              <label className="text-sm font-medium flex items-center gap-2 mb-2">
+                <Monitor size={16} className="text-slate-400" />
+                Video Aspect Ratio
+              </label>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                {aspectRatios.map((ratio) => (
+                  <button
+                    key={ratio.value}
+                    onClick={() => onAspectRatioChange(ratio.value)}
+                    className={`flex flex-col items-center justify-center p-3 rounded-xl border transition-all gap-1
+                      ${state.aspectRatio === ratio.value 
+                        ? 'bg-blue-50 border-blue-500 text-blue-700 font-bold' 
+                        : 'bg-slate-50 border-slate-200 text-slate-500 hover:bg-slate-100'}`}
+                  >
+                    {ratio.icon}
+                    <span className="text-[10px]">{ratio.label}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Resolution Scale Selection */}
+            <div className="space-y-2 md:col-span-2">
+              <label className="text-sm font-medium flex items-center gap-2 mb-2">
+                <Layers size={16} className="text-slate-400" />
+                Resolution / Quality Scale
+              </label>
+              <div className="grid grid-cols-4 gap-2">
+                {resolutionScales.map((scale) => (
+                  <button
+                    key={scale.value}
+                    onClick={() => onResolutionScaleChange(scale.value)}
+                    className={`flex flex-col items-center justify-center p-3 rounded-xl border transition-all
+                      ${state.resolutionScale === scale.value 
+                        ? 'bg-blue-600 border-blue-600 text-white font-bold' 
+                        : 'bg-slate-50 border-slate-200 text-slate-500 hover:bg-slate-100'}`}
+                  >
+                    <span className="text-sm">{scale.label}</span>
+                    <span className={`text-[8px] uppercase tracking-tighter ${state.resolutionScale === scale.value ? 'text-blue-100' : 'text-slate-400'}`}>
+                      {scale.sub}
+                    </span>
+                  </button>
+                ))}
+              </div>
+              <p className="text-[10px] text-slate-400 mt-1 italic">Note: Higher resolutions take longer to encode and result in larger files.</p>
+            </div>
+
             <div className="space-y-2 md:col-span-2">
               <label className="text-sm font-medium flex items-center gap-2">
                 <MessageSquare size={16} className="text-slate-400" />
