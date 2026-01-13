@@ -1,6 +1,6 @@
 
 import React, { useState, useCallback } from 'react';
-import { Upload, Play, Clock, MessageSquare, CheckCircle2, Loader2, Video, Download, AlertCircle } from 'lucide-react';
+import { Upload, Play, Clock, MessageSquare, CheckCircle2, Loader2, Video, Download, AlertCircle, ExternalLink } from 'lucide-react';
 import { AppState, ProcessingStep, SlideData, NarrationSegment, AppLanguage } from './types';
 import { processPdf } from './services/pdf';
 import { generateScripts, generateAudio, decodeAudioData } from './services/gemini';
@@ -11,9 +11,9 @@ import PresentationPlayer from './components/PresentationPlayer';
 const App: React.FC = () => {
   const [state, setState] = useState<AppState>({
     files: [],
-    duration: 60, // Default 60 seconds
+    duration: 60,
     style: 'An atmospheric tone that reveals the truth',
-    language: 'ko', // Default to Korean
+    language: 'ko',
     slides: [],
     narrations: [],
     step: 'idle',
@@ -21,6 +21,11 @@ const App: React.FC = () => {
     progress: 0,
     error: null,
   });
+
+  // 백엔드 서버 URL 설정 (GitHub Pages 사용 시 Render나 Railway 주소를 여기에 적으세요)
+  const BACKEND_URL = window.location.hostname === 'localhost' 
+    ? 'http://localhost:8000' 
+    : 'https://your-backend-service.onrender.com'; // 실제 배포한 백엔드 주소로 변경 필요
 
   const fileToBase64 = (file: File): Promise<string> => {
     return new Promise((resolve, reject) => {
@@ -43,31 +48,23 @@ const App: React.FC = () => {
       for (const file of state.files) {
         if (file.type === 'application/pdf') {
           const pdfSlides = await processPdf(file);
-          const mappedPdfSlides = pdfSlides.map(s => ({
-            ...s,
-            index: slideCounter++
-          }));
-          allSlides = [...allSlides, ...mappedPdfSlides];
+          allSlides = [...allSlides, ...pdfSlides.map(s => ({ ...s, index: slideCounter++ }))];
         } else if (file.type.startsWith('image/')) {
           const base64 = await fileToBase64(file);
-          allSlides.push({
-            index: slideCounter++,
-            image: base64,
-            text: `Image file: ${file.name}`
-          });
+          allSlides.push({ index: slideCounter++, image: base64, text: `Image: ${file.name}` });
         }
       }
 
-      if (allSlides.length === 0) throw new Error("No valid slides found in uploaded files.");
+      if (allSlides.length === 0) throw new Error("No valid slides found.");
 
       setState(prev => ({ ...prev, slides: allSlides, step: 'scripting', progress: 30 }));
 
-      // Pass the target duration to Gemini for script length calculation
       const scriptItems = await generateScripts(allSlides, state.duration, state.style, state.language);
       const narrations: NarrationSegment[] = scriptItems.map(item => ({
         slideIndex: item.slideIndex,
         script: item.script,
       }));
+      
       setState(prev => ({ ...prev, narrations, step: 'voicing', progress: 60 }));
 
       const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
@@ -82,14 +79,14 @@ const App: React.FC = () => {
         setState(prev => ({ 
           ...prev, 
           narrations: [...updatedNarrations],
-          progress: 60 + Math.floor((i / updatedNarrations.length) * 35) 
+          progress: 60 + Math.floor(((i + 1) / updatedNarrations.length) * 35) 
         }));
       }
 
       setState(prev => ({ ...prev, step: 'ready', progress: 100 }));
     } catch (err: any) {
       console.error(err);
-      setState(prev => ({ ...prev, step: 'idle', error: err.message || "An unexpected error occurred." }));
+      setState(prev => ({ ...prev, step: 'idle', error: err.message || "An error occurred during generation." }));
     }
   };
 
@@ -100,43 +97,31 @@ const App: React.FC = () => {
 
     try {
       const payloadSlides = [];
-      
-      // Prepare payload with base64 images and WAV audio for each slide
       for (let i = 0; i < state.slides.length; i++) {
         const slide = state.slides[i];
         const narration = state.narrations.find(n => n.slideIndex === slide.index);
-        
         if (!narration?.audioBuffer) continue;
 
-        // Convert AudioBuffer to WAV blob then Base64
         const wavBlob = audioBufferToWav(narration.audioBuffer);
         const audioBase64 = await blobToBase64(wavBlob);
-
-        payloadSlides.push({
-          image_base64: slide.image,
-          audio_base64: audioBase64
-        });
+        payloadSlides.push({ image_base64: slide.image, audio_base64: audioBase64 });
       }
 
-      // Call the Python backend (Assumes it is running at the same origin or proxy)
-      // If deployed separately, replace with full URL like https://your-backend.render.com/api/generate-video
-      const response = await fetch('/api/generate-video', {
+      const response = await fetch(`${BACKEND_URL}/api/generate-video`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ slides: payloadSlides })
       });
 
       if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.detail || "Failed to generate video on server.");
+        throw new Error("비디오 생성 서버에 연결할 수 없습니다. 백엔드 서버(Render 등)가 실행 중인지 확인하세요.");
       }
 
-      // Download the resulting MP4
       const videoBlob = await response.blob();
       const url = window.URL.createObjectURL(videoBlob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `SlideStream_${new Date().getTime()}.mp4`;
+      a.download = `Presentation_${new Date().getTime()}.mp4`;
       document.body.appendChild(a);
       a.click();
       window.URL.revokeObjectURL(url);
@@ -144,7 +129,10 @@ const App: React.FC = () => {
 
     } catch (err: any) {
       console.error("Export Error:", err);
-      setState(prev => ({ ...prev, error: `Export failed: ${err.message}. Ensure the backend server is running.` }));
+      setState(prev => ({ 
+        ...prev, 
+        error: `MP4 내보내기 실패: ${err.message}. 팁: 정적 사이트(GitHub Pages)에서는 별도의 백엔드 서버가 필요합니다.` 
+      }));
     } finally {
       setState(prev => ({ ...prev, isExporting: false }));
     }
@@ -180,7 +168,7 @@ const App: React.FC = () => {
               onClick={handleReset}
               className="text-sm font-medium text-slate-500 hover:text-slate-900 transition-colors"
             >
-              Start New Project
+              새로 만들기
             </button>
           )}
         </div>
@@ -190,29 +178,28 @@ const App: React.FC = () => {
         {state.step === 'ready' ? (
           <div className="max-w-4xl mx-auto space-y-6">
              <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden p-6">
-                <div className="flex items-center justify-between mb-6">
+                <div className="flex items-center justify-between mb-6 flex-wrap gap-4">
                   <div>
-                    <h2 className="text-2xl font-bold">Your AI Presentation</h2>
-                    <p className="text-slate-500">Preview slides and voiceover before exporting.</p>
+                    <h2 className="text-2xl font-bold">프레젠테이션 미리보기</h2>
+                    <p className="text-slate-500 text-sm">슬라이드와 AI 음성을 확인하고 MP4로 내보내세요.</p>
                   </div>
                   <button 
                     onClick={handleExport}
                     disabled={state.isExporting}
-                    className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 disabled:bg-slate-300 text-white px-5 py-2.5 rounded-xl font-bold transition-all shadow-lg shadow-blue-500/20 active:scale-95"
+                    className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 disabled:bg-slate-300 text-white px-6 py-2.5 rounded-xl font-bold transition-all shadow-lg shadow-blue-500/20 active:scale-95"
                   >
-                    {state.isExporting ? (
-                      <Loader2 size={18} className="animate-spin" />
-                    ) : (
-                      <Download size={18} />
-                    )}
-                    {state.isExporting ? 'Generating MP4...' : 'Export MP4'}
+                    {state.isExporting ? <Loader2 size={18} className="animate-spin" /> : <Download size={18} />}
+                    {state.isExporting ? '인코딩 중...' : 'MP4 내보내기'}
                   </button>
                 </div>
 
                 {state.error && (
                   <div className="mb-6 p-4 bg-red-50 border border-red-100 rounded-xl flex items-start gap-3 text-red-700">
                     <AlertCircle className="shrink-0 mt-0.5" size={18} />
-                    <p className="text-sm">{state.error}</p>
+                    <div className="text-sm">
+                      <p className="font-bold">알림</p>
+                      <p>{state.error}</p>
+                    </div>
                   </div>
                 )}
 
@@ -231,45 +218,39 @@ const App: React.FC = () => {
         )}
       </main>
 
-      {/* Rendering Overlay */}
+      {/* 로딩 오버레이 */}
       {(state.step !== 'idle' && state.step !== 'ready' || state.isExporting) && (
-        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl p-8 max-w-md w-full shadow-2xl">
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-md z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl p-8 max-w-md w-full shadow-2xl border border-white/20">
             <div className="flex flex-col items-center text-center">
-              <div className="relative mb-6">
-                <Loader2 className="w-16 h-16 text-blue-600 animate-spin" />
+              <div className="relative mb-8">
+                <div className="w-20 h-20 border-4 border-blue-100 rounded-full animate-pulse"></div>
+                <Loader2 className="w-10 h-10 text-blue-600 animate-spin absolute top-1/2 left-1/2 -mt-5 -ml-5" />
                 {!state.isExporting && (
-                  <span className="absolute inset-0 flex items-center justify-center text-xs font-bold text-blue-600">
+                  <div className="absolute -bottom-2 bg-blue-600 text-white text-[10px] px-2 py-0.5 rounded-full font-bold">
                     {state.progress}%
-                  </span>
+                  </div>
                 )}
               </div>
-              <h3 className="text-xl font-bold mb-2">
-                {state.isExporting ? 'Encoding Video...' : (
-                  <>
-                    {state.step === 'parsing' && 'Processing Slides...'}
-                    {state.step === 'scripting' && 'Writing Narrative...'}
-                    {state.step === 'voicing' && 'Generating Voiceovers...'}
-                  </>
-                )}
+              <h3 className="text-2xl font-black mb-3 text-slate-900">
+                {state.isExporting ? '동영상 렌더링 중' : '프레젠테이션 제작 중'}
               </h3>
-              <p className="text-slate-500 mb-6 text-sm">
+              <p className="text-slate-500 mb-8 text-sm leading-relaxed">
                 {state.isExporting 
-                  ? 'We are stitching the high-quality images and audio tracks into an MP4 file. This takes high CPU usage and may take a minute.'
-                  : 'Please wait while our AI builds your presentation components.'}
+                  ? '슬라이드와 오디오를 합쳐 MP4 파일을 만들고 있습니다. 이 작업은 서버 성능에 따라 최대 1분 정도 소요될 수 있습니다.'
+                  : 'AI가 슬라이드를 분석하고 대본과 음성을 생성하고 있습니다.'}
               </p>
-              {!state.isExporting ? (
-                <div className="w-full bg-slate-100 rounded-full h-2">
-                  <div 
-                    className="bg-blue-600 h-2 rounded-full transition-all duration-500" 
-                    style={{ width: `${state.progress}%` }}
-                  />
-                </div>
-              ) : (
-                <div className="w-full h-2 bg-blue-100 rounded-full overflow-hidden relative">
-                   <div className="absolute inset-0 bg-gradient-to-r from-blue-600/0 via-blue-600 to-blue-600/0 animate-[shimmer_2s_infinite]" style={{ backgroundSize: '200% 100%' }} />
-                </div>
-              )}
+              
+              <div className="w-full bg-slate-100 rounded-full h-3 overflow-hidden relative">
+                {state.isExporting ? (
+                  <div className="h-full bg-blue-600 animate-[shimmer_2s_infinite] w-full" style={{
+                    backgroundImage: 'linear-gradient(90deg, rgba(255,255,255,0) 0%, rgba(255,255,255,0.4) 50%, rgba(255,255,255,0) 100%)',
+                    backgroundSize: '200% 100%'
+                  }} />
+                ) : (
+                  <div className="h-full bg-blue-600 transition-all duration-500 ease-out" style={{ width: `${state.progress}%` }} />
+                )}
+              </div>
             </div>
           </div>
         </div>
