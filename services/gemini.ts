@@ -1,6 +1,25 @@
 
 import { GoogleGenAI, Modality, Type } from "@google/genai";
 
+/**
+ * API 키가 유효한지 간단한 모델 리스트 확인이나 헬로 월드 호출로 검증합니다.
+ */
+export const validateApiKey = async (apiKey: string): Promise<boolean> => {
+  try {
+    const ai = new GoogleGenAI({ apiKey });
+    // 가장 가벼운 모델로 아주 짧은 텍스트 생성을 시도하여 키 작동 여부 확인
+    const response = await ai.models.generateContent({
+      model: 'gemini-3-flash-lite-latest',
+      contents: [{ parts: [{ text: 'hi' }] }],
+      config: { maxOutputTokens: 1 }
+    });
+    return !!response.text;
+  } catch (e) {
+    console.error("API Key validation failed:", e);
+    return false;
+  }
+};
+
 export const generateScripts = async (
   slides: { index: number; image: string; text: string }[],
   totalDurationSec: number,

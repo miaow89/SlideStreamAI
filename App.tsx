@@ -1,13 +1,17 @@
+
 import React, { useState, useEffect, useRef } from 'react';
-import { Video, Download, Key, X, Loader2, ServerOff, AlertCircle } from 'lucide-react';
+import { Video, Download, Key, X, Loader2, ShieldCheck, ShieldAlert, AlertCircle } from 'lucide-react';
 import { AppState, SlideData, NarrationSegment, AppLanguage } from './types';
 import { processPdf } from './services/pdf';
-import { generateScripts, generateAudio, decodeAudioData } from './services/gemini';
+import { generateScripts, generateAudio, decodeAudioData, validateApiKey } from './services/gemini';
 import Dashboard from './components/Dashboard';
 import PresentationPlayer from './components/PresentationPlayer';
 
 const App: React.FC = () => {
-  const [apiKey, setApiKey] = useState<string>(localStorage.getItem('GEMINI_API_KEY') || process.env.API_KEY || '');
+  // 보안을 위해 sessionStorage 사용 (브라우저 닫으면 삭제)
+  const [apiKey, setApiKey] = useState<string>(sessionStorage.getItem('GEMINI_API_KEY') || process.env.API_KEY || '');
+  const [isKeyValidated, setIsKeyValidated] = useState<boolean>(false);
+  const [isValidating, setIsValidating] = useState<boolean>(false);
   const [showKeyModal, setShowKeyModal] = useState<boolean>(false);
   const [tempKey, setTempKey] = useState<string>('');
   
@@ -24,18 +28,34 @@ const App: React.FC = () => {
     error: null,
   });
 
-  // For Browser Recording
-  const canvasRef = useRef<HTMLCanvasElement | null>(null);
-
   useEffect(() => {
-    if (!apiKey) setShowKeyModal(true);
-  }, [apiKey]);
+    // 앱 시작 시 기존 키가 있다면 자동 검증 시도
+    if (apiKey && !isKeyValidated) {
+      handleValidateKey(apiKey);
+    } else if (!apiKey) {
+      setShowKeyModal(true);
+    }
+  }, []);
+
+  const handleValidateKey = async (keyToValidate: string) => {
+    setIsValidating(true);
+    const isValid = await validateApiKey(keyToValidate);
+    setIsValidating(false);
+    
+    if (isValid) {
+      setApiKey(keyToValidate);
+      setIsKeyValidated(true);
+      sessionStorage.setItem('GEMINI_API_KEY', keyToValidate);
+      setShowKeyModal(false);
+    } else {
+      setIsKeyValidated(false);
+      setState(prev => ({ ...prev, error: "유효하지 않은 API 키입니다. 다시 확인해주세요." }));
+    }
+  };
 
   const handleSaveKey = () => {
     if (tempKey.trim()) {
-      setApiKey(tempKey.trim());
-      localStorage.setItem('GEMINI_API_KEY', tempKey.trim());
-      setShowKeyModal(false);
+      handleValidateKey(tempKey.trim());
     }
   };
 
@@ -49,7 +69,11 @@ const App: React.FC = () => {
   };
 
   const handleStartGeneration = async () => {
-    if (!apiKey) { setShowKeyModal(true); return; }
+    // 항상 키 확인
+    if (!apiKey || !isKeyValidated) {
+      setShowKeyModal(true);
+      return;
+    }
     if (state.files.length === 0) return;
 
     try {
@@ -84,6 +108,7 @@ const App: React.FC = () => {
       const updatedNarrations = [...narrations];
       const voice = state.language === 'ko' ? 'Kore' : 'Zephyr';
 
+      // 병렬 처리 최적화는 추후 적용하고 일단 안정성 위해 순차 처리 유지
       for (let i = 0; i < updatedNarrations.length; i++) {
         const audioData = await generateAudio(updatedNarrations[i].script, apiKey, voice);
         const buffer = await decodeAudioData(audioData, audioCtx);
@@ -117,9 +142,10 @@ const App: React.FC = () => {
       const ctx = canvas.getContext('2d');
       if (!ctx) throw new Error("Canvas context failed");
 
-      const stream = canvas.captureStream(30); // 30 FPS
+      const stream = canvas.captureStream(30); 
       stream.addTrack(dest.stream.getAudioTracks()[0]);
 
+      // 코덱 지원 여부 체크 로직 추가 권장 (현재는 표준인 webm 적용)
       const recorder = new MediaRecorder(stream, { mimeType: 'video/webm;codecs=vp9,opus' });
       const chunks: Blob[] = [];
       recorder.ondataavailable = (e) => chunks.push(e.data);
@@ -143,12 +169,11 @@ const App: React.FC = () => {
 
         setState(prev => ({ ...prev, progress: Math.floor((i / state.slides.length) * 100) }));
 
-        // Draw slide
         const img = new Image();
         img.src = slide.image;
         await new Promise((res) => { img.onload = res; });
         
-        ctx.fillStyle = '#0f172a'; // Slate-900
+        ctx.fillStyle = '#0f172a'; 
         ctx.fillRect(0, 0, canvas.width, canvas.height);
         
         const scale = Math.min(canvas.width / img.width, canvas.height / img.height);
@@ -156,7 +181,6 @@ const App: React.FC = () => {
         const y = (canvas.height / 2) - (img.height / 2) * scale;
         ctx.drawImage(img, x, y, img.width * scale, img.height * scale);
 
-        // Play audio segment
         const source = audioCtx.createBufferSource();
         source.buffer = narration.audioBuffer;
         source.connect(dest);
@@ -183,8 +207,12 @@ const App: React.FC = () => {
             <h1 className="text-xl font-bold text-slate-900">SlideStream AI</h1>
           </div>
           <div className="flex items-center gap-4">
+            <div className={`flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold ${isKeyValidated ? 'bg-green-50 text-green-700' : 'bg-amber-50 text-amber-700'}`}>
+              {isKeyValidated ? <ShieldCheck size={14} /> : <ShieldAlert size={14} />}
+              {isKeyValidated ? 'API 연결됨' : '연결 안됨'}
+            </div>
             <button onClick={() => setShowKeyModal(true)} className="text-slate-500 hover:text-blue-600 flex items-center gap-1 text-sm font-medium">
-              <Key size={14} /> API 키 설정
+              <Key size={14} /> 키 재설정
             </button>
             {state.step === 'ready' && (
               <button onClick={() => setState(prev => ({ ...prev, step: 'idle', files: [], error: null }))} className="text-sm font-medium text-slate-500 hover:text-slate-900">
@@ -231,6 +259,7 @@ const App: React.FC = () => {
         ) : (
           <Dashboard 
             state={state} 
+            isKeyValidated={isKeyValidated}
             onFilesChange={(files) => setState(prev => ({ ...prev, files: Array.from(files), error: null }))}
             onDurationChange={(duration) => setState(prev => ({ ...prev, duration }))}
             onStyleChange={(style) => setState(prev => ({ ...prev, style }))}
@@ -244,18 +273,26 @@ const App: React.FC = () => {
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[60] flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl p-6 max-w-md w-full shadow-2xl">
             <div className="flex justify-between items-center mb-4">
-              <h3 className="text-lg font-bold flex items-center gap-2"><Key className="text-blue-600" size={20} /> Gemini API 키 입력</h3>
+              <h3 className="text-lg font-bold flex items-center gap-2"><Key className="text-blue-600" size={20} /> Gemini API 키 확인</h3>
               <button onClick={() => setShowKeyModal(false)} className="text-slate-400 hover:text-slate-600"><X size={20} /></button>
             </div>
-            <p className="text-sm text-slate-500 mb-4">Gemini 2.5 및 3 모델을 사용하기 위한 API 키가 필요합니다.</p>
+            <p className="text-sm text-slate-500 mb-4">안전한 프레젠테이션 제작을 위해 유효한 API 키가 등록되어야 합니다.</p>
             <input 
               type="password"
-              placeholder="API 키를 입력하세요"
+              placeholder="AI Studio에서 발급받은 키를 입력하세요"
               value={tempKey}
               onChange={(e) => setTempKey(e.target.value)}
               className="w-full px-4 py-3 border border-slate-200 rounded-lg mb-4 focus:ring-2 focus:ring-blue-500 outline-none"
             />
-            <button onClick={handleSaveKey} className="w-full py-3 bg-blue-600 text-white font-bold rounded-xl hover:bg-blue-700 transition-colors">저장 및 계속하기</button>
+            <button 
+              onClick={handleSaveKey} 
+              disabled={isValidating || !tempKey}
+              className="w-full py-3 bg-blue-600 text-white font-bold rounded-xl hover:bg-blue-700 transition-colors flex items-center justify-center gap-2"
+            >
+              {isValidating ? <Loader2 size={18} className="animate-spin" /> : <ShieldCheck size={18} />}
+              {isValidating ? '검증 중...' : '키 검증 및 저장'}
+            </button>
+            <p className="mt-4 text-[11px] text-slate-400 text-center uppercase tracking-wider">키는 세션 동안만 브라우저에 임시 저장됩니다.</p>
           </div>
         </div>
       )}
