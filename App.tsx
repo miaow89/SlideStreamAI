@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect, useCallback } from 'react';
-import { Upload, Play, Clock, MessageSquare, CheckCircle2, Loader2, Video, Download, AlertCircle, ExternalLink, Key, X } from 'lucide-react';
+import { Upload, Play, Clock, MessageSquare, CheckCircle2, Loader2, Video, Download, AlertCircle, ExternalLink, Key, X, Terminal } from 'lucide-react';
 import { AppState, ProcessingStep, SlideData, NarrationSegment, AppLanguage } from './types';
 import { processPdf } from './services/pdf';
 import { generateScripts, generateAudio, decodeAudioData } from './services/gemini';
@@ -40,10 +40,10 @@ const App: React.FC = () => {
     }
   };
 
-  // 로컬 호스트인 경우 8000번 포트 사용, 아닌 경우 실제 배포된 백엔드 URL 사용
+  // 백엔드 주소 설정
   const BACKEND_URL = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
     ? 'http://localhost:8000' 
-    : 'https://slidestream-backend.onrender.com'; // 사용자의 실제 백엔드 주소로 변경 필요
+    : 'https://slidestream-backend.onrender.com';
 
   const fileToBase64 = (file: File): Promise<string> => {
     return new Promise((resolve, reject) => {
@@ -115,12 +115,6 @@ const App: React.FC = () => {
   const handleExport = async () => {
     if (state.slides.length === 0 || state.narrations.length === 0) return;
     
-    // 기본 플레이스홀더 주소인 경우 경고
-    if (BACKEND_URL.includes('your-backend-service')) {
-      setState(prev => ({ ...prev, error: "백엔드 서버 주소가 설정되지 않았습니다. 로컬에서 실행 중이라면 python backend/main.py를 실행하세요." }));
-      return;
-    }
-
     setState(prev => ({ ...prev, isExporting: true, error: null }));
 
     try {
@@ -160,7 +154,11 @@ const App: React.FC = () => {
       document.body.removeChild(a);
     } catch (err: any) {
       console.error(err);
-      setState(prev => ({ ...prev, error: `내보내기 실패: ${err.message}. 백엔드 서버가 실행 중인지 확인하세요.` }));
+      let errorMsg = `내보내기 실패: ${err.message}.`;
+      if (err.message === 'Failed to fetch') {
+        errorMsg = "백엔드 서버에 연결할 수 없습니다. Python 서버가 실행 중인지 확인하세요.";
+      }
+      setState(prev => ({ ...prev, error: errorMsg }));
     } finally {
       setState(prev => ({ ...prev, isExporting: false }));
     }
@@ -198,12 +196,26 @@ const App: React.FC = () => {
 
       <main className="max-w-7xl mx-auto px-4 py-8">
         {state.error && (
-          <div className="mb-6 max-w-4xl mx-auto p-4 bg-red-50 border border-red-100 rounded-xl flex items-start gap-3 text-red-700">
-            <AlertCircle className="shrink-0 mt-0.5" size={18} />
-            <div className="text-sm">
-              <p className="font-bold">오류 발생</p>
-              <p>{state.error}</p>
+          <div className="mb-6 max-w-4xl mx-auto p-5 bg-red-50 border border-red-100 rounded-2xl flex flex-col gap-3 text-red-700 shadow-sm">
+            <div className="flex items-start gap-3">
+              <AlertCircle className="shrink-0 mt-0.5" size={20} />
+              <div className="text-sm">
+                <p className="font-bold text-base mb-1">문제가 발생했습니다</p>
+                <p className="leading-relaxed">{state.error}</p>
+              </div>
             </div>
+            {state.error.includes("백엔드 서버") && (
+              <div className="mt-2 p-3 bg-white/50 rounded-xl border border-red-200/50">
+                <p className="text-xs font-bold uppercase tracking-wider text-red-500 mb-2 flex items-center gap-1">
+                  <Terminal size={12} /> 해결 방법
+                </p>
+                <ol className="text-xs space-y-1 list-decimal list-inside text-red-600">
+                  <li>터미널에서 <code>pip install -r backend/requirements.txt</code> 실행</li>
+                  <li><code>python backend/main.py</code> 명령어로 서버 실행</li>
+                  <li>서버가 8000번 포트에서 시작되었는지 확인 후 다시 시도</li>
+                </ol>
+              </div>
+            )}
           </div>
         )}
 
