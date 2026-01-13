@@ -15,7 +15,7 @@ const App: React.FC = () => {
   
   const [state, setState] = useState<AppState>({
     files: [],
-    duration: 60,
+    duration: 120,
     style: 'An atmospheric tone that reveals the truth',
     language: 'ko',
     slides: [],
