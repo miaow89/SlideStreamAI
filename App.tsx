@@ -62,6 +62,7 @@ const App: React.FC = () => {
 
       setState(prev => ({ ...prev, slides: allSlides, step: 'scripting', progress: 30 }));
 
+      // Pass the target duration to Gemini for script length calculation
       const scriptItems = await generateScripts(allSlides, state.duration, state.style, state.language);
       const narrations: NarrationSegment[] = scriptItems.map(item => ({
         slideIndex: item.slideIndex,
@@ -100,12 +101,14 @@ const App: React.FC = () => {
     try {
       const payloadSlides = [];
       
+      // Prepare payload with base64 images and WAV audio for each slide
       for (let i = 0; i < state.slides.length; i++) {
         const slide = state.slides[i];
         const narration = state.narrations.find(n => n.slideIndex === slide.index);
         
         if (!narration?.audioBuffer) continue;
 
+        // Convert AudioBuffer to WAV blob then Base64
         const wavBlob = audioBufferToWav(narration.audioBuffer);
         const audioBase64 = await blobToBase64(wavBlob);
 
@@ -115,6 +118,8 @@ const App: React.FC = () => {
         });
       }
 
+      // Call the Python backend (Assumes it is running at the same origin or proxy)
+      // If deployed separately, replace with full URL like https://your-backend.render.com/api/generate-video
       const response = await fetch('/api/generate-video', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -126,11 +131,12 @@ const App: React.FC = () => {
         throw new Error(errorData.detail || "Failed to generate video on server.");
       }
 
+      // Download the resulting MP4
       const videoBlob = await response.blob();
       const url = window.URL.createObjectURL(videoBlob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `Presentation_${new Date().getTime()}.mp4`;
+      a.download = `SlideStream_${new Date().getTime()}.mp4`;
       document.body.appendChild(a);
       a.click();
       window.URL.revokeObjectURL(url);
@@ -138,7 +144,7 @@ const App: React.FC = () => {
 
     } catch (err: any) {
       console.error("Export Error:", err);
-      setState(prev => ({ ...prev, error: `Export failed: ${err.message}` }));
+      setState(prev => ({ ...prev, error: `Export failed: ${err.message}. Ensure the backend server is running.` }));
     } finally {
       setState(prev => ({ ...prev, isExporting: false }));
     }
@@ -187,19 +193,19 @@ const App: React.FC = () => {
                 <div className="flex items-center justify-between mb-6">
                   <div>
                     <h2 className="text-2xl font-bold">Your AI Presentation</h2>
-                    <p className="text-slate-500">Ready for preview and review</p>
+                    <p className="text-slate-500">Preview slides and voiceover before exporting.</p>
                   </div>
                   <button 
                     onClick={handleExport}
                     disabled={state.isExporting}
-                    className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 disabled:bg-slate-300 text-white px-4 py-2 rounded-lg font-medium transition-colors shadow-md"
+                    className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 disabled:bg-slate-300 text-white px-5 py-2.5 rounded-xl font-bold transition-all shadow-lg shadow-blue-500/20 active:scale-95"
                   >
                     {state.isExporting ? (
                       <Loader2 size={18} className="animate-spin" />
                     ) : (
                       <Download size={18} />
                     )}
-                    {state.isExporting ? 'Exporting...' : 'Export MP4'}
+                    {state.isExporting ? 'Generating MP4...' : 'Export MP4'}
                   </button>
                 </div>
 
@@ -225,7 +231,7 @@ const App: React.FC = () => {
         )}
       </main>
 
-      {/* Progress & Export Overlay */}
+      {/* Rendering Overlay */}
       {(state.step !== 'idle' && state.step !== 'ready' || state.isExporting) && (
         <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl p-8 max-w-md w-full shadow-2xl">
@@ -239,39 +245,41 @@ const App: React.FC = () => {
                 )}
               </div>
               <h3 className="text-xl font-bold mb-2">
-                {state.isExporting ? 'Rendering MP4...' : (
+                {state.isExporting ? 'Encoding Video...' : (
                   <>
-                    {state.step === 'parsing' && 'Processing Files...'}
-                    {state.step === 'scripting' && 'Writing Script...'}
+                    {state.step === 'parsing' && 'Processing Slides...'}
+                    {state.step === 'scripting' && 'Writing Narrative...'}
                     {state.step === 'voicing' && 'Generating Voiceovers...'}
                   </>
                 )}
               </h3>
               <p className="text-slate-500 mb-6 text-sm">
                 {state.isExporting 
-                  ? 'Stitching your presentation into a high-quality video file. This may take a minute.'
-                  : 'Our AI is currently processing your presentation elements.'}
+                  ? 'We are stitching the high-quality images and audio tracks into an MP4 file. This takes high CPU usage and may take a minute.'
+                  : 'Please wait while our AI builds your presentation components.'}
               </p>
-              {!state.isExporting && (
-                <div className="w-full bg-slate-100 rounded-full h-2 mb-4">
+              {!state.isExporting ? (
+                <div className="w-full bg-slate-100 rounded-full h-2">
                   <div 
                     className="bg-blue-600 h-2 rounded-full transition-all duration-500" 
                     style={{ width: `${state.progress}%` }}
                   />
                 </div>
-              )}
-              {state.isExporting && (
-                 <div className="w-full h-2 bg-blue-100 rounded-full overflow-hidden">
-                    <div className="h-full bg-blue-600 animate-[shimmer_2s_infinite] w-full" style={{
-                      backgroundImage: 'linear-gradient(90deg, rgba(255,255,255,0) 0%, rgba(255,255,255,0.4) 50%, rgba(255,255,255,0) 100%)',
-                      backgroundSize: '200% 100%'
-                    }} />
-                 </div>
+              ) : (
+                <div className="w-full h-2 bg-blue-100 rounded-full overflow-hidden relative">
+                   <div className="absolute inset-0 bg-gradient-to-r from-blue-600/0 via-blue-600 to-blue-600/0 animate-[shimmer_2s_infinite]" style={{ backgroundSize: '200% 100%' }} />
+                </div>
               )}
             </div>
           </div>
         </div>
       )}
+      <style>{`
+        @keyframes shimmer {
+          0% { transform: translateX(-100%); }
+          100% { transform: translateX(100%); }
+        }
+      `}</style>
     </div>
   );
 };
