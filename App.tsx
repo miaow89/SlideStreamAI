@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useRef } from 'react';
 import { Video, Download, Key, X, Loader2, Music, AlertCircle } from 'lucide-react';
 import { AppState, SlideData, NarrationSegment, AppLanguage } from './types';
@@ -9,7 +8,8 @@ import Dashboard from './components/Dashboard';
 import PresentationPlayer from './components/PresentationPlayer';
 
 const App: React.FC = () => {
-  const [apiKey, setApiKey] = useState<string>(localStorage.getItem('GEMINI_API_KEY') || process.env.API_KEY || '');
+  // Initialize state only with process.env.API_KEY, removing localStorage.getItem
+  const [apiKey, setApiKey] = useState<string>(process.env.API_KEY || '');
   const [showKeyModal, setShowKeyModal] = useState<boolean>(false);
   const [tempKey, setTempKey] = useState<string>('');
   
@@ -27,13 +27,14 @@ const App: React.FC = () => {
   });
 
   useEffect(() => {
+    // Show modal every time if apiKey is not set
     if (!apiKey) setShowKeyModal(true);
   }, [apiKey]);
 
   const handleSaveKey = () => {
     if (tempKey.trim()) {
       setApiKey(tempKey.trim());
-      localStorage.setItem('GEMINI_API_KEY', tempKey.trim());
+      // Removed localStorage.setItem to avoid persisting the key
       setShowKeyModal(false);
     }
   };
