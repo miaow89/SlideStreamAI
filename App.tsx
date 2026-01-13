@@ -1,8 +1,10 @@
+
 import React, { useState, useEffect, useRef } from 'react';
-import { Video, Download, Key, X, Loader2, ServerOff, AlertCircle } from 'lucide-react';
+import { Video, Download, Key, X, Loader2, Music, AlertCircle } from 'lucide-react';
 import { AppState, SlideData, NarrationSegment, AppLanguage } from './types';
 import { processPdf } from './services/pdf';
 import { generateScripts, generateAudio, decodeAudioData } from './services/gemini';
+import { audioBufferToWav } from './services/audioUtils';
 import Dashboard from './components/Dashboard';
 import PresentationPlayer from './components/PresentationPlayer';
 
@@ -23,9 +25,6 @@ const App: React.FC = () => {
     progress: 0,
     error: null,
   });
-
-  // For Browser Recording
-  const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
   useEffect(() => {
     if (!apiKey) setShowKeyModal(true);
@@ -100,6 +99,40 @@ const App: React.FC = () => {
     } catch (err: any) {
       console.error(err);
       setState(prev => ({ ...prev, step: 'idle', error: err.message || "생성 중 오류가 발생했습니다." }));
+    }
+  };
+
+  const handleExportAudio = () => {
+    if (state.narrations.length === 0) return;
+    
+    try {
+      const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
+      const validNarrations = state.narrations.filter(n => n.audioBuffer);
+      
+      if (validNarrations.length === 0) return;
+
+      const totalLength = validNarrations.reduce((acc, n) => acc + (n.audioBuffer?.length || 0), 0);
+      const sampleRate = validNarrations[0].audioBuffer!.sampleRate;
+      const combinedBuffer = audioCtx.createBuffer(1, totalLength, sampleRate);
+      
+      let offset = 0;
+      validNarrations.forEach(n => {
+        if (n.audioBuffer) {
+          combinedBuffer.getChannelData(0).set(n.audioBuffer.getChannelData(0), offset);
+          offset += n.audioBuffer.length;
+        }
+      });
+
+      const wavBlob = audioBufferToWav(combinedBuffer);
+      const url = URL.createObjectURL(wavBlob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `SlideStream_Audio_${new Date().getTime()}.wav`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error("오디오 내보내기 실패:", err);
+      setState(prev => ({ ...prev, error: "오디오 파일을 생성하는 데 실패했습니다." }));
     }
   };
 
@@ -214,16 +247,25 @@ const App: React.FC = () => {
                 <div className="flex items-center justify-between mb-6 flex-wrap gap-4">
                   <div>
                     <h2 className="text-2xl font-bold">프레젠테이션 미리보기</h2>
-                    <p className="text-slate-500 text-sm">슬라이드와 AI 음성을 확인하고 동영상으로 내보내세요.</p>
+                    <p className="text-slate-500 text-sm">슬라이드와 AI 음성을 확인하고 내보내세요.</p>
                   </div>
-                  <button 
-                    onClick={handleExportBrowser}
-                    disabled={state.isExporting}
-                    className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 disabled:bg-slate-300 text-white px-6 py-2.5 rounded-xl font-bold transition-all shadow-lg shadow-blue-500/20"
-                  >
-                    {state.isExporting ? <Loader2 size={18} className="animate-spin" /> : <Download size={18} />}
-                    {state.isExporting ? `동영상 녹화 중 (${state.progress}%)` : "동영상 저장 (.webm)"}
-                  </button>
+                  <div className="flex gap-2">
+                    <button 
+                      onClick={handleExportAudio}
+                      className="flex items-center gap-2 bg-slate-100 hover:bg-slate-200 text-slate-700 px-4 py-2.5 rounded-xl font-bold transition-all border border-slate-200"
+                    >
+                      <Music size={18} />
+                      오디오 저장 (.wav)
+                    </button>
+                    <button 
+                      onClick={handleExportBrowser}
+                      disabled={state.isExporting}
+                      className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 disabled:bg-slate-300 text-white px-6 py-2.5 rounded-xl font-bold transition-all shadow-lg shadow-blue-500/20"
+                    >
+                      {state.isExporting ? <Loader2 size={18} className="animate-spin" /> : <Download size={18} />}
+                      {state.isExporting ? `동영상 녹화 중 (${state.progress}%)` : "동영상 저장 (.webm)"}
+                    </button>
+                  </div>
                 </div>
                 <PresentationPlayer slides={state.slides} narrations={state.narrations} />
              </div>
