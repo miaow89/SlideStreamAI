@@ -1,6 +1,6 @@
 
-import React, { useState, useCallback } from 'react';
-import { Upload, Play, Clock, MessageSquare, CheckCircle2, Loader2, Video, Download, AlertCircle, ExternalLink } from 'lucide-react';
+import React, { useState, useEffect, useCallback } from 'react';
+import { Upload, Play, Clock, MessageSquare, CheckCircle2, Loader2, Video, Download, AlertCircle, ExternalLink, Key, X } from 'lucide-react';
 import { AppState, ProcessingStep, SlideData, NarrationSegment, AppLanguage } from './types';
 import { processPdf } from './services/pdf';
 import { generateScripts, generateAudio, decodeAudioData } from './services/gemini';
@@ -9,6 +9,10 @@ import Dashboard from './components/Dashboard';
 import PresentationPlayer from './components/PresentationPlayer';
 
 const App: React.FC = () => {
+  const [apiKey, setApiKey] = useState<string>(localStorage.getItem('GEMINI_API_KEY') || process.env.API_KEY || '');
+  const [showKeyModal, setShowKeyModal] = useState<boolean>(false);
+  const [tempKey, setTempKey] = useState<string>('');
+  
   const [state, setState] = useState<AppState>({
     files: [],
     duration: 60,
@@ -22,10 +26,24 @@ const App: React.FC = () => {
     error: null,
   });
 
-  // 백엔드 서버 URL 설정 (GitHub Pages 사용 시 Render나 Railway 주소를 여기에 적으세요)
+  useEffect(() => {
+    // API 키가 없으면 모달을 띄웁니다.
+    if (!apiKey) {
+      setShowKeyModal(true);
+    }
+  }, [apiKey]);
+
+  const handleSaveKey = () => {
+    if (tempKey.trim()) {
+      setApiKey(tempKey.trim());
+      localStorage.setItem('GEMINI_API_KEY', tempKey.trim());
+      setShowKeyModal(false);
+    }
+  };
+
   const BACKEND_URL = window.location.hostname === 'localhost' 
     ? 'http://localhost:8000' 
-    : 'https://your-backend-service.onrender.com'; // 실제 배포한 백엔드 주소로 변경 필요
+    : 'https://your-backend-service.onrender.com';
 
   const fileToBase64 = (file: File): Promise<string> => {
     return new Promise((resolve, reject) => {
@@ -37,6 +55,10 @@ const App: React.FC = () => {
   };
 
   const handleStartGeneration = async () => {
+    if (!apiKey) {
+      setShowKeyModal(true);
+      return;
+    }
     if (state.files.length === 0) return;
 
     try {
@@ -59,7 +81,7 @@ const App: React.FC = () => {
 
       setState(prev => ({ ...prev, slides: allSlides, step: 'scripting', progress: 30 }));
 
-      const scriptItems = await generateScripts(allSlides, state.duration, state.style, state.language);
+      const scriptItems = await generateScripts(allSlides, state.duration, state.style, state.language, apiKey);
       const narrations: NarrationSegment[] = scriptItems.map(item => ({
         slideIndex: item.slideIndex,
         script: item.script,
@@ -72,7 +94,7 @@ const App: React.FC = () => {
       const voice = state.language === 'ko' ? 'Kore' : 'Zephyr';
 
       for (let i = 0; i < updatedNarrations.length; i++) {
-        const audioData = await generateAudio(updatedNarrations[i].script, voice);
+        const audioData = await generateAudio(updatedNarrations[i].script, apiKey, voice);
         const buffer = await decodeAudioData(audioData, audioCtx);
         updatedNarrations[i].audioBuffer = buffer;
         
@@ -92,7 +114,6 @@ const App: React.FC = () => {
 
   const handleExport = async () => {
     if (state.slides.length === 0 || state.narrations.length === 0) return;
-
     setState(prev => ({ ...prev, isExporting: true, error: null }));
 
     try {
@@ -113,44 +134,23 @@ const App: React.FC = () => {
         body: JSON.stringify({ slides: payloadSlides })
       });
 
-      if (!response.ok) {
-        throw new Error("비디오 생성 서버에 연결할 수 없습니다. 백엔드 서버(Render 등)가 실행 중인지 확인하세요.");
-      }
+      if (!response.ok) throw new Error("비디오 생성 서버 응답 실패");
 
       const videoBlob = await response.blob();
       const url = window.URL.createObjectURL(videoBlob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `Presentation_${new Date().getTime()}.mp4`;
+      a.download = `SlideStream_${new Date().getTime()}.mp4`;
       document.body.appendChild(a);
       a.click();
       window.URL.revokeObjectURL(url);
       document.body.removeChild(a);
-
     } catch (err: any) {
-      console.error("Export Error:", err);
-      setState(prev => ({ 
-        ...prev, 
-        error: `MP4 내보내기 실패: ${err.message}. 팁: 정적 사이트(GitHub Pages)에서는 별도의 백엔드 서버가 필요합니다.` 
-      }));
+      console.error(err);
+      setState(prev => ({ ...prev, error: `내보내기 실패: ${err.message}` }));
     } finally {
       setState(prev => ({ ...prev, isExporting: false }));
     }
-  };
-
-  const handleReset = () => {
-    setState({
-      files: [],
-      duration: 60,
-      style: 'An atmospheric tone that reveals the truth',
-      language: 'ko',
-      slides: [],
-      narrations: [],
-      step: 'idle',
-      isExporting: false,
-      progress: 0,
-      error: null,
-    });
   };
 
   return (
@@ -163,14 +163,23 @@ const App: React.FC = () => {
             </div>
             <h1 className="text-xl font-bold text-slate-900">SlideStream AI</h1>
           </div>
-          {state.step === 'ready' && (
+          <div className="flex items-center gap-4">
             <button 
-              onClick={handleReset}
-              className="text-sm font-medium text-slate-500 hover:text-slate-900 transition-colors"
+              onClick={() => setShowKeyModal(true)}
+              className="text-slate-500 hover:text-blue-600 flex items-center gap-1 text-sm font-medium"
             >
-              새로 만들기
+              <Key size={14} />
+              API 키 설정
             </button>
-          )}
+            {state.step === 'ready' && (
+              <button 
+                onClick={() => setState(prev => ({ ...prev, step: 'idle', files: [] }))}
+                className="text-sm font-medium text-slate-500 hover:text-slate-900"
+              >
+                새로 만들기
+              </button>
+            )}
+          </div>
         </div>
       </header>
 
@@ -186,23 +195,12 @@ const App: React.FC = () => {
                   <button 
                     onClick={handleExport}
                     disabled={state.isExporting}
-                    className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 disabled:bg-slate-300 text-white px-6 py-2.5 rounded-xl font-bold transition-all shadow-lg shadow-blue-500/20 active:scale-95"
+                    className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 disabled:bg-slate-300 text-white px-6 py-2.5 rounded-xl font-bold transition-all"
                   >
                     {state.isExporting ? <Loader2 size={18} className="animate-spin" /> : <Download size={18} />}
-                    {state.isExporting ? '인코딩 중...' : 'MP4 내보내기'}
+                    내보내기
                   </button>
                 </div>
-
-                {state.error && (
-                  <div className="mb-6 p-4 bg-red-50 border border-red-100 rounded-xl flex items-start gap-3 text-red-700">
-                    <AlertCircle className="shrink-0 mt-0.5" size={18} />
-                    <div className="text-sm">
-                      <p className="font-bold">알림</p>
-                      <p>{state.error}</p>
-                    </div>
-                  </div>
-                )}
-
                 <PresentationPlayer slides={state.slides} narrations={state.narrations} />
              </div>
           </div>
@@ -218,49 +216,61 @@ const App: React.FC = () => {
         )}
       </main>
 
+      {/* API 키 모달 */}
+      {showKeyModal && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[60] flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl p-6 max-w-md w-full shadow-2xl">
+            <div className="flex justify-between items-center mb-4">
+              <h3 className="text-lg font-bold flex items-center gap-2">
+                <Key className="text-blue-600" size={20} />
+                Gemini API 키 입력
+              </h3>
+              <button onClick={() => setShowKeyModal(false)} className="text-slate-400 hover:text-slate-600">
+                <X size={20} />
+              </button>
+            </div>
+            <p className="text-sm text-slate-500 mb-4 leading-relaxed">
+              이 앱을 사용하려면 Google Gemini API 키가 필요합니다. 키가 없다면 아래 링크에서 무료로 발급받으실 수 있습니다.
+            </p>
+            <a 
+              href="https://aistudio.google.com/app/api-keys?hl=ko" 
+              target="_blank" 
+              rel="noopener noreferrer"
+              className="text-blue-600 hover:underline text-sm flex items-center gap-1 mb-6"
+            >
+              Gemini API 키 발급받기 (무료)
+              <ExternalLink size={14} />
+            </a>
+            <input 
+              type="password"
+              placeholder="API 키를 입력하세요"
+              value={tempKey}
+              onChange={(e) => setTempKey(e.target.value)}
+              className="w-full px-4 py-2 border border-slate-200 rounded-lg mb-4 focus:ring-2 focus:ring-blue-500 outline-none"
+            />
+            <button 
+              onClick={handleSaveKey}
+              className="w-full py-3 bg-blue-600 text-white font-bold rounded-xl hover:bg-blue-700 transition-colors"
+            >
+              저장 및 시작하기
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* 로딩 오버레이 */}
       {(state.step !== 'idle' && state.step !== 'ready' || state.isExporting) && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-md z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-3xl p-8 max-w-md w-full shadow-2xl border border-white/20">
-            <div className="flex flex-col items-center text-center">
-              <div className="relative mb-8">
-                <div className="w-20 h-20 border-4 border-blue-100 rounded-full animate-pulse"></div>
-                <Loader2 className="w-10 h-10 text-blue-600 animate-spin absolute top-1/2 left-1/2 -mt-5 -ml-5" />
-                {!state.isExporting && (
-                  <div className="absolute -bottom-2 bg-blue-600 text-white text-[10px] px-2 py-0.5 rounded-full font-bold">
-                    {state.progress}%
-                  </div>
-                )}
-              </div>
-              <h3 className="text-2xl font-black mb-3 text-slate-900">
-                {state.isExporting ? '동영상 렌더링 중' : '프레젠테이션 제작 중'}
-              </h3>
-              <p className="text-slate-500 mb-8 text-sm leading-relaxed">
-                {state.isExporting 
-                  ? '슬라이드와 오디오를 합쳐 MP4 파일을 만들고 있습니다. 이 작업은 서버 성능에 따라 최대 1분 정도 소요될 수 있습니다.'
-                  : 'AI가 슬라이드를 분석하고 대본과 음성을 생성하고 있습니다.'}
-              </p>
-              
-              <div className="w-full bg-slate-100 rounded-full h-3 overflow-hidden relative">
-                {state.isExporting ? (
-                  <div className="h-full bg-blue-600 animate-[shimmer_2s_infinite] w-full" style={{
-                    backgroundImage: 'linear-gradient(90deg, rgba(255,255,255,0) 0%, rgba(255,255,255,0.4) 50%, rgba(255,255,255,0) 100%)',
-                    backgroundSize: '200% 100%'
-                  }} />
-                ) : (
-                  <div className="h-full bg-blue-600 transition-all duration-500 ease-out" style={{ width: `${state.progress}%` }} />
-                )}
-              </div>
+          <div className="bg-white rounded-3xl p-8 max-w-md w-full shadow-2xl flex flex-col items-center text-center">
+            <Loader2 className="w-12 h-12 text-blue-600 animate-spin mb-4" />
+            <h3 className="text-xl font-bold mb-2">프레젠테이션 제작 중</h3>
+            <p className="text-slate-500 text-sm mb-6">AI가 슬라이드를 분석하고 음성을 생성하고 있습니다. 잠시만 기다려 주세요.</p>
+            <div className="w-full bg-slate-100 h-2 rounded-full overflow-hidden">
+              <div className="h-full bg-blue-600 transition-all duration-500" style={{ width: `${state.progress}%` }} />
             </div>
           </div>
         </div>
       )}
-      <style>{`
-        @keyframes shimmer {
-          0% { transform: translateX(-100%); }
-          100% { transform: translateX(100%); }
-        }
-      `}</style>
     </div>
   );
 };

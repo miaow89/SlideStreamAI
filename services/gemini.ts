@@ -1,17 +1,15 @@
 
 import { GoogleGenAI, Modality, Type } from "@google/genai";
 
-const API_KEY = process.env.API_KEY;
-
 export const generateScripts = async (
   slides: { index: number; image: string; text: string }[],
   totalDurationSec: number,
   style: string,
-  language: 'en' | 'ko'
+  language: 'en' | 'ko',
+  apiKey: string
 ): Promise<{ slideIndex: number; script: string }[]> => {
-  const ai = new GoogleGenAI({ apiKey: API_KEY });
+  const ai = new GoogleGenAI({ apiKey });
   
-  // Standard speaking rate is approx 2.5 words per second (150 wpm)
   const totalWords = Math.floor(totalDurationSec * 2.5);
   const wordsPerSlide = Math.floor(totalWords / slides.length);
 
@@ -75,8 +73,8 @@ export const generateScripts = async (
   }
 };
 
-export const generateAudio = async (text: string, voice: string = 'Kore'): Promise<Uint8Array> => {
-  const ai = new GoogleGenAI({ apiKey: API_KEY });
+export const generateAudio = async (text: string, apiKey: string, voice: string = 'Kore'): Promise<Uint8Array> => {
+  const ai = new GoogleGenAI({ apiKey });
   const response = await ai.models.generateContent({
     model: "gemini-2.5-flash-preview-tts",
     contents: [{ parts: [{ text }] }],
