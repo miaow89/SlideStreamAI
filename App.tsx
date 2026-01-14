@@ -136,47 +136,48 @@ const App: React.FC = () => {
     }
   };
 
+  /**
+   * Concatenates slides and their corresponding narration audio segments 
+   * sequentially into a single video file using MediaRecorder and Canvas.
+   */
   const handleExportBrowser = async () => {
     if (state.slides.length === 0 || state.narrations.length === 0) return;
     setState(prev => ({ ...prev, isExporting: true, progress: 0 }));
 
     try {
+      // 1. Setup Audio Context and Destination for recording
       const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
       if (audioCtx.state === 'suspended') await audioCtx.resume();
-      
       const dest = audioCtx.createMediaStreamDestination();
+      
+      // 2. Setup Canvas for visual capture
       const canvas = document.createElement('canvas');
-      
-      let baseWidth = 1280;
-      let baseHeight = 720;
-      
+      let baseWidth = 1280, baseHeight = 720;
       switch (state.aspectRatio) {
         case '9:16': baseWidth = 720; baseHeight = 1280; break;
         case '1:1': baseWidth = 1080; baseHeight = 1080; break;
         case '4:3': baseWidth = 1024; baseHeight = 768; break;
         default: baseWidth = 1280; baseHeight = 720; break;
       }
-
       canvas.width = baseWidth * state.resolutionScale;
       canvas.height = baseHeight * state.resolutionScale;
       
       const ctx = canvas.getContext('2d');
       if (!ctx) throw new Error("Canvas context failed");
-      
-      // QUALITY SETTINGS: Maximize sharpness
       ctx.imageSmoothingEnabled = true;
       ctx.imageSmoothingQuality = 'high';
 
-      const stream = canvas.captureStream(30); 
-      stream.addTrack(dest.stream.getAudioTracks()[0]);
+      // 3. Setup Stream and MediaRecorder
+      const videoStream = canvas.captureStream(30); // 30 FPS
+      const combinedStream = new MediaStream([
+        ...videoStream.getVideoTracks(),
+        ...dest.stream.getAudioTracks()
+      ]);
 
-      // BITRATE CALCULATION: High bitrate ensures minimal compression artifacts
-      // 10Mbps base for HD, scaled exponentially for higher resolutions.
       const targetBitrate = 12000000 * state.resolutionScale * state.resolutionScale;
-      // Cap at 100Mbps to avoid browser instability
       const videoBitsPerSecond = Math.min(targetBitrate, 100000000);
 
-      const recorder = new MediaRecorder(stream, { 
+      const recorder = new MediaRecorder(combinedStream, { 
         mimeType: 'video/webm;codecs=vp9,opus',
         videoBitsPerSecond: videoBitsPerSecond
       });
@@ -189,51 +190,64 @@ const App: React.FC = () => {
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
-        a.download = `SlideStream_${state.aspectRatio.replace(':','x')}_${state.resolutionScale}x_${new Date().getTime()}.webm`;
+        a.download = `SlideStream_Concatenated_${state.aspectRatio.replace(':','x')}_${state.resolutionScale}x_${new Date().getTime()}.webm`;
         a.click();
         setState(prev => ({ ...prev, isExporting: false }));
       };
 
+      // 4. Start recording
       recorder.start();
 
-      for (let i = 0; i < state.slides.length; i++) {
-        const slide = state.slides[i];
+      // 5. Sequential loop through all slides (Concatenation Logic)
+      // We sort slides by index just in case they are out of order
+      const sortedSlides = [...state.slides].sort((a, b) => a.index - b.index);
+
+      for (let i = 0; i < sortedSlides.length; i++) {
+        const slide = sortedSlides[i];
         const narration = state.narrations.find(n => n.slideIndex === slide.index);
 
-        setState(prev => ({ ...prev, progress: Math.floor((i / state.slides.length) * 100) }));
+        setState(prev => ({ ...prev, progress: Math.floor((i / sortedSlides.length) * 100) }));
 
+        // Draw slide image
         const img = new Image();
         img.src = slide.image;
         await new Promise((res) => { img.onload = res; });
         
-        ctx.fillStyle = '#0f172a';
+        ctx.fillStyle = '#0f172a'; // Clear background
         ctx.fillRect(0, 0, canvas.width, canvas.height);
         
         const scale = Math.min(canvas.width / img.width, canvas.height / img.height);
         const x = (canvas.width / 2) - (img.width / 2) * scale;
         const y = (canvas.height / 2) - (img.height / 2) * scale;
-        
-        // Draw the high-res source image onto the export canvas
         ctx.drawImage(img, x, y, img.width * scale, img.height * scale);
 
+        // Synchronize with narration audio
         if (narration?.audioBuffer) {
           const source = audioCtx.createBufferSource();
           source.buffer = narration.audioBuffer;
           source.connect(dest);
-          source.connect(audioCtx.destination);
+          // Optional: connect to speakers so user can hear while recording
+          // source.connect(audioCtx.destination); 
           
-          const playPromise = new Promise((res) => { source.onended = res; });
+          const audioPlayPromise = new Promise((res) => { source.onended = res; });
           source.start();
-          await playPromise;
+          await audioPlayPromise; // Wait for this clip to finish before next slide
         } else {
+          // If no audio for a slide, show it for a default duration (e.g., 3 seconds)
           await new Promise(resolve => setTimeout(resolve, 3000));
         }
       }
 
+      // 6. Stop recording after all clips are processed
       recorder.stop();
+      
     } catch (err: any) {
       console.error(err);
-      setState(prev => ({ ...prev, error: "동영상 녹화 중 오류가 발생했습니다. 브라우저 탭이 활성화된 상태여야 합니다.", isExporting: false }));
+      setState(prev => ({ 
+        ...prev, 
+        error: "동영상 녹화 중 오류가 발생했습니다. 브라우저 탭이 백그라운드에 있으면 중단될 수 있습니다.", 
+        isExporting: false 
+      }));
     }
   };
 
@@ -293,7 +307,7 @@ const App: React.FC = () => {
                       className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 disabled:bg-slate-300 text-white px-6 py-2.5 rounded-xl font-bold transition-all shadow-lg shadow-blue-500/20"
                     >
                       {state.isExporting ? <Loader2 size={18} className="animate-spin" /> : <Download size={18} />}
-                      {state.isExporting ? `동영상 녹화 중 (${state.progress}%)` : "동영상 저장 (.webm)"}
+                      {state.isExporting ? `동영상 생성 중 (${state.progress}%)` : "동영상 저장 (.webm)"}
                     </button>
                   </div>
                 </div>
@@ -346,7 +360,7 @@ const App: React.FC = () => {
             <h3 className="text-xl font-bold mb-2">{state.isExporting ? "동영상 인코딩 중" : "프레젠테이션 제작 중"}</h3>
             <p className="text-slate-500 text-sm leading-relaxed">
               {state.isExporting 
-                ? "브라우저에서 직접 슬라이드를 녹화하고 있습니다. 탭을 끄지 마세요." 
+                ? "브라우저에서 직접 슬라이드를 녹화하여 이어 붙이고 있습니다. 탭을 끄지 마세요." 
                 : "AI가 슬라이드를 분석하고 음성을 생성하고 있습니다."}
             </p>
             <div className="w-full bg-slate-100 h-2 rounded-full overflow-hidden mt-6">
